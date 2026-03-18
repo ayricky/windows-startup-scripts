@@ -24,5 +24,5 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Opens Zen if needed and reapplies the saved Discord and Zen window layout." `
+    -Description "Waits for Discord and Zen startup windows and reapplies the saved window layout." `
     -Force

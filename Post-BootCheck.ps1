@@ -1,11 +1,13 @@
 param(
-    [int]$InitialDelaySeconds = 480,
+    [int]$InitialDelaySeconds = 180,
     [int]$LayoutTolerancePixels = 12,
     [string]$ConfigPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "window-layout.json"),
-    [string[]]$ClosedProcessNames = @(
+    [string[]]$ClosedProcessNames = @(),
+    [string[]]$HiddenWindowProcessNames = @(
         "StreamDeck",
         "WaveLink",
-        "WaveLinkSE"
+        "WaveLinkSE",
+        "rawaccel"
     )
 )
 
@@ -17,6 +19,7 @@ $logger = New-RunLogger -ScriptName "Post-BootCheck" -ScriptRoot $scriptRoot -Pa
     LayoutTolerancePixels = $LayoutTolerancePixels
     ConfigPath = $ConfigPath
     ClosedProcessNames = $ClosedProcessNames
+    HiddenWindowProcessNames = $HiddenWindowProcessNames
 }
 
 $signature = @'
@@ -117,7 +120,8 @@ function Get-BestWindowMatch {
         $_.ProcessName -ieq $ProcessName -and
         $_.Visible -and
         $_.Width -gt 200 -and
-        $_.Height -gt 150
+        $_.Height -gt 150 -and
+        -not (Test-IgnoredWindow -ProcessName $_.ProcessName -Title $_.Title)
     }
 
     if ($Title) {
@@ -128,6 +132,22 @@ function Get-BestWindowMatch {
     }
 
     return $matches | Sort-Object Area -Descending | Select-Object -First 1
+}
+
+function Test-IgnoredWindow {
+    param(
+        [string]$ProcessName,
+        [string]$Title
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Title)) {
+        return $false
+    }
+
+    switch -Regex ($ProcessName) {
+        '^discord$' { return ($Title -match 'Updater') }
+        default { return $false }
+    }
 }
 
 function Test-WithinTolerance {
@@ -147,21 +167,21 @@ try {
         Start-Sleep -Seconds $InitialDelaySeconds
     }
 
-    $bootTime = (Get-Date).AddMilliseconds(-[Environment]::TickCount64)
+    $sessionWindowStart = $logger.StartedAt.AddMinutes(-2)
+    $now = [DateTimeOffset]::Now
 
     $applyRuns = Get-RunHistory -Path (Join-Path $scriptRoot "logs\Apply-WindowLayout.runs.json")
-    $closeRuns = Get-RunHistory -Path (Join-Path $scriptRoot "logs\Close-PeripheralStartupApps.runs.json")
-    $applyRun = @($applyRuns | Where-Object { [datetime]$_.StartedAt -ge $bootTime } | Select-Object -Last 1)[0]
-    $closeRun = @($closeRuns | Where-Object { [datetime]$_.StartedAt -ge $bootTime } | Select-Object -Last 1)[0]
+    $primeRuns = Get-RunHistory -Path (Join-Path $scriptRoot "logs\Prime-WaveLinkUI.runs.json")
+    $applyRun = @($applyRuns | Where-Object { ([DateTimeOffset]$_.StartedAt) -ge $sessionWindowStart -and ([DateTimeOffset]$_.StartedAt) -le $now } | Select-Object -Last 1)[0]
+    $primeRun = @($primeRuns | Where-Object { ([DateTimeOffset]$_.StartedAt) -ge $sessionWindowStart -and ([DateTimeOffset]$_.StartedAt) -le $now } | Select-Object -Last 1)[0]
 
     $layoutChecks = @()
+    $windows = Get-TopLevelWindows
     if (Test-Path $ConfigPath) {
         $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
         if ($config -isnot [System.Collections.IEnumerable]) {
             $config = @($config)
         }
-
-        $windows = Get-TopLevelWindows
         foreach ($entry in $config) {
             $window = Get-BestWindowMatch -Windows $windows -ProcessName $entry.ProcessName -Title $entry.Title
 
@@ -212,6 +232,16 @@ try {
         }
     }
 
+    $hiddenWindowChecks = foreach ($processName in $HiddenWindowProcessNames) {
+        $window = Get-BestWindowMatch -Windows $windows -ProcessName $processName -Title ""
+        [pscustomobject]@{
+            ProcessName = $processName
+            WindowVisible = [bool]$window
+            WindowTitle = if ($window) { $window.Title } else { $null }
+            Handle = if ($window) { $window.Handle } else { $null }
+        }
+    }
+
     $issues = @()
     if (-not $applyRun) {
         $issues += "Apply-WindowLayout did not run after boot."
@@ -220,11 +250,11 @@ try {
         $issues += "Apply-WindowLayout last run after boot was $($applyRun.Status)."
     }
 
-    if (-not $closeRun) {
-        $issues += "Close-PeripheralStartupApps did not run after boot."
+    if (-not $primeRun) {
+        $issues += "Prime-WaveLinkUI did not run after boot."
     }
-    elseif ($closeRun.Status -ne "success") {
-        $issues += "Close-PeripheralStartupApps last run after boot was $($closeRun.Status)."
+    elseif ($primeRun.Status -ne "success") {
+        $issues += "Prime-WaveLinkUI last run after boot was $($primeRun.Status)."
     }
 
     foreach ($entry in $layoutChecks) {
@@ -242,17 +272,24 @@ try {
         }
     }
 
+    foreach ($entry in $hiddenWindowChecks) {
+        if ($entry.WindowVisible) {
+            $issues += "$($entry.ProcessName) window is still visible."
+        }
+    }
+
     foreach ($issue in $issues) {
         Add-RunEvent -Logger $logger -Message $issue -Type "issue"
     }
 
     $status = if ($issues.Count -eq 0) { "success" } else { "failed" }
     Complete-RunLogger -Logger $logger -Status $status -Summary @{
-        BootTime = $bootTime.ToString("o")
+        SessionWindowStart = $sessionWindowStart.ToString("o")
         ApplyRun = if ($applyRun) { $applyRun } else { $null }
-        CloseRun = if ($closeRun) { $closeRun } else { $null }
+        PrimeRun = if ($primeRun) { $primeRun } else { $null }
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks
+        HiddenWindowChecks = $hiddenWindowChecks
         Issues = $issues
     }
 }

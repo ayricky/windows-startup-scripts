@@ -100,6 +100,22 @@ function Get-TopLevelWindows {
     return $windows
 }
 
+function Test-IgnoredWindow {
+    param(
+        [string]$ProcessName,
+        [string]$Title
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Title)) {
+        return $false
+    }
+
+    switch -Regex ($ProcessName) {
+        '^discord$' { return ($Title -match 'Updater') }
+        default { return $false }
+    }
+}
+
 try {
     Add-RunEvent -Logger $logger -Message "Run started." -Type "start"
 
@@ -110,7 +126,8 @@ try {
                 $_.ProcessName -ieq $processName -and
                 $_.Visible -and
                 $_.Width -gt 200 -and
-                $_.Height -gt 150
+                $_.Height -gt 150 -and
+                -not (Test-IgnoredWindow -ProcessName $_.ProcessName -Title $_.Title)
             } |
             Sort-Object Area -Descending |
             Select-Object -First 1
@@ -134,7 +151,7 @@ try {
 
         [pscustomobject]@{
             ProcessName = $match.ProcessName
-            Title = $match.Title
+            Title = ""
             Left = $match.Left
             Top = $match.Top
             Width = $match.Width

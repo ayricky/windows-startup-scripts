@@ -1,73 +1,64 @@
 # windows-startup-scripts
 
-PowerShell scripts for two startup automations:
+Windows logon automation for:
 
-- restore saved `Discord` and `Zen` window positions at logon
-- wait for selected startup apps to initialize, then close them automatically
+- starting `Zen` and `Discord`
+- restoring the saved `Zen` and `Discord` layout
+- briefly surfacing `Wave Link`, then closing only its window
+- applying `RawAccel` with `writer.exe settings.json`
 
-## What Each Script Does
+## Scripts
 
-- `Apply-WindowLayout.ps1`: waits for `Discord` and `Zen`, launches them if needed, then moves them to the saved size and position
-- `Close-PeripheralStartupApps.ps1`: watches for selected apps, then closes each one after it has been open for the configured amount of time
-- `Post-BootCheck.ps1`: verifies after logon that the main automation ran and that the expected apps/windows reached the desired state
-- `Save-WindowLayout.ps1`: captures the current `Discord` and `Zen` window geometry into `window-layout.json`
-- `Update-WindowLayout.ps1`: re-saves the layout file, with an optional immediate apply
-- `Register-WindowLayoutTask.ps1`: creates the `Apply Window Layout` scheduled task
-- `Register-PeripheralCleanupTask.ps1`: creates the `Close Peripheral Startup Apps` scheduled task
-- `Register-PostBootCheckTask.ps1`: creates the `Post Boot Check` scheduled task
+- `Install-AppStartupShortcuts.ps1`: creates Startup-folder shortcuts for `Zen` and `Discord`
+- `Apply-WindowLayout.ps1`: waits for `Discord` and `Zen`, then restores the saved size and position
+- `Prime-WaveLinkUI.ps1`: opens the full `Wave Link` UI briefly after sign-in, then closes only the window
+- `Post-BootCheck.ps1`: verifies that layout and Wave Link priming ran and logs issues
+- `Register-WindowLayoutTask.ps1`: registers the `Apply Window Layout` task
+- `Register-WaveLinkPrimerTask.ps1`: registers the `Prime Wave Link UI` task
+- `Register-PostBootCheckTask.ps1`: registers the `Post Boot Check` task
+- `Register-RawAccelTask.ps1`: configures RawAccel through `HKCU\...\Run`
+- `Save-WindowLayout.ps1`: captures the current `Discord` and `Zen` geometry into `window-layout.json`
+- `Update-WindowLayout.ps1`: refreshes the saved layout
 - `Get-AutomationMetrics.ps1`: summarizes recent run history
-- `RunLogger.ps1`: shared bounded JSON run logging used by the other scripts
+- `RunLogger.ps1`: shared bounded JSON logging
 
 ## Setup
 
-1. Put the scripts in a folder you want to keep, then open PowerShell in that folder.
-2. Arrange `Discord` and `Zen` exactly how you want them.
-3. Save the layout:
-
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-AppStartupShortcuts.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Save-WindowLayout.ps1
-```
-
-4. Register the startup tasks:
-
-```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-WindowLayoutTask.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-PeripheralCleanupTask.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-WaveLinkPrimerTask.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-PostBootCheckTask.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-RawAccelTask.ps1
 ```
 
-5. Sign out and back in, or run the scripts manually to test.
+Sign out and back in, or reboot, to test.
 
-## Configuration
+## Configure
 
-Edit `Apply-WindowLayout.ps1` to change:
+- `Apply-WindowLayout.ps1`
+  - `StartupDelaySeconds`
+  - `WaitForExistingWindowSeconds`
+  - `PollIntervalSeconds`
+- `Prime-WaveLinkUI.ps1`
+  - `InitialDelaySeconds`
+  - `WaitForWindowSeconds`
+  - `HoldUiSeconds`
+- `Post-BootCheck.ps1`
+  - `InitialDelaySeconds`
+  - `LayoutTolerancePixels`
+- `Register-RawAccelTask.ps1`
+  - `InstallRoot`
+  - `ValueName`
 
-- `StartupDelaySeconds`
-- `WaitForExistingWindowSeconds`
-- `PollIntervalSeconds`
-- `PostLaunchWindowWaitSeconds`
-- `ZenPath`
-- `DiscordPath`
+Run `Update-WindowLayout.ps1` any time your monitor layout changes.
 
-Edit `Close-PeripheralStartupApps.ps1` to change:
+## State
 
-- `WatchMinutes`
-- `PollSeconds`
-- `SecondsOpenBeforeClose`
-- `ProcessNames`
-
-Edit `Post-BootCheck.ps1` to change:
-
-- `InitialDelaySeconds`
-- `LayoutTolerancePixels`
-- `ClosedProcessNames`
-
-Run `Update-WindowLayout.ps1` any time you want to overwrite `window-layout.json` with a new saved layout.
-
-## Logs And State
-
-- `window-layout.json`: saved local window positions
-- `logs/*.runs.json`: bounded run history, last 100 runs per script
+- `window-layout.json`: saved window positions
+- `logs/*.runs.json`: last 100 runs per script
+- Startup shortcuts: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
 
 ## Metrics
 

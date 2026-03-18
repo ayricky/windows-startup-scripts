@@ -1,9 +1,9 @@
-$taskName = "Close Peripheral Startup Apps"
-$scriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Close-PeripheralStartupApps.ps1"
+$taskName = "Prime Wave Link UI"
+$scriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Prime-WaveLinkUI.ps1"
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 if (-not (Test-Path $scriptPath)) {
-    throw "Cleanup script not found at $scriptPath"
+    throw "Wave Link primer script not found at $scriptPath"
 }
 
 $action = New-ScheduledTaskAction `
@@ -14,7 +14,7 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
     -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 
@@ -24,5 +24,5 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Polls for startup tray apps, then closes each one after it has been running for one minute." `
+    -Description "Launches the full Wave Link UI briefly after sign-in, then closes only the window so background routing stays active." `
     -Force

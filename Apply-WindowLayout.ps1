@@ -1,11 +1,13 @@
 param(
     [string]$ConfigPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "window-layout.json"),
-    [int]$StartupDelaySeconds = 20,
+    [int]$StartupDelaySeconds = 10,
     [int]$WaitForExistingWindowSeconds = 120,
-    [int]$PollIntervalSeconds = 5,
-    [int]$PostLaunchWindowWaitSeconds = 45,
+    [int]$PollIntervalSeconds = 2,
+    [int]$PostLaunchWindowWaitSeconds = 20,
+    [string]$ZenLauncherPath = "C:\Program Files\Zen Browser\desktop-launcher\desktop-launcher.exe",
     [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
-    [string]$DiscordPath = ""
+    [string]$DiscordPath = "",
+    [switch]$LaunchMissingApps
 )
 
 $signature = @'
@@ -62,8 +64,10 @@ $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot
     WaitForExistingWindowSeconds = $WaitForExistingWindowSeconds
     PollIntervalSeconds = $PollIntervalSeconds
     PostLaunchWindowWaitSeconds = $PostLaunchWindowWaitSeconds
+    ZenLauncherPath = $ZenLauncherPath
     ZenPath = $ZenPath
     DiscordPath = $DiscordPath
+    LaunchMissingApps = [bool]$LaunchMissingApps
 }
 
 $swpNoZOrder = 0x0004
@@ -130,7 +134,8 @@ function Get-BestWindowMatch {
             $_.ProcessName -ieq $ProcessName -and
             $_.Visible -and
             $_.Width -gt 200 -and
-            $_.Height -gt 150
+            $_.Height -gt 150 -and
+            -not (Test-IgnoredWindow -ProcessName $_.ProcessName -Title $_.Title)
         }
 
     if ($Title) {
@@ -143,12 +148,30 @@ function Get-BestWindowMatch {
     return $windows | Sort-Object Area -Descending | Select-Object -First 1
 }
 
+function Test-IgnoredWindow {
+    param(
+        [string]$ProcessName,
+        [string]$Title
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Title)) {
+        return $false
+    }
+
+    switch -Regex ($ProcessName) {
+        '^discord$' { return ($Title -match 'Updater') }
+        default { return $false }
+    }
+}
+
 function Wait-ForWindow {
     param(
+        [hashtable]$Logger,
         [string]$ProcessName,
         [string]$Title,
         [int]$TimeoutSeconds,
-        [int]$PollSeconds
+        [int]$PollSeconds,
+        [int]$ProgressEveryPolls = 5
     )
 
     $startedWaitingAt = Get-Date
@@ -165,6 +188,14 @@ function Wait-ForWindow {
         }
 
         $pollCount++
+        if ($Logger -and $pollCount -gt 0 -and ($pollCount % $ProgressEveryPolls -eq 0)) {
+            Add-RunEvent -Logger $Logger -Message "Still waiting for app window." -Type "waiting" -Data @{
+                ProcessName = $ProcessName
+                Title = $Title
+                WaitedSeconds = [math]::Round(((Get-Date) - $startedWaitingAt).TotalSeconds, 2)
+                PollCount = $pollCount
+            }
+        }
         Start-Sleep -Seconds $PollSeconds
     } while ((Get-Date) -lt $deadline)
 
@@ -212,17 +243,31 @@ function Resolve-LaunchSpec {
 
     switch -Regex ($ProcessName) {
         '^zen$' {
+            if (Test-Path $ZenLauncherPath -ErrorAction SilentlyContinue) {
+                return @{
+                    FilePath = $ZenLauncherPath
+                    ArgumentList = @()
+                    WorkingDirectory = (Split-Path -Parent $ZenLauncherPath)
+                }
+            }
+
             if (Test-Path $ZenPath -ErrorAction SilentlyContinue) {
                 return @{
                     FilePath = $ZenPath
-                    ArgumentList = @()
+                    ArgumentList = @("-new-window")
+                    WorkingDirectory = (Split-Path -Parent $ZenPath)
                 }
             }
 
             return $null
         }
         '^discord$' {
-            return Resolve-DiscordLaunch -PreferredPath $DiscordPath
+            $discordLaunch = Resolve-DiscordLaunch -PreferredPath $DiscordPath
+            if ($discordLaunch) {
+                $discordLaunch.WorkingDirectory = Split-Path -Parent $discordLaunch.FilePath
+            }
+
+            return $discordLaunch
         }
         default {
             return $null
@@ -244,11 +289,18 @@ function Start-TrackedApp {
     }
 
     try {
-        Start-Process -FilePath $launchSpec.FilePath -ArgumentList $launchSpec.ArgumentList | Out-Null
+        if (@($launchSpec.ArgumentList).Count -gt 0) {
+            Start-Process -FilePath $launchSpec.FilePath -WorkingDirectory $launchSpec.WorkingDirectory -ArgumentList $launchSpec.ArgumentList | Out-Null
+        }
+        else {
+            Start-Process -FilePath $launchSpec.FilePath -WorkingDirectory $launchSpec.WorkingDirectory | Out-Null
+        }
+
         return [pscustomobject]@{
             Started = $true
             FilePath = $launchSpec.FilePath
             ArgumentList = @($launchSpec.ArgumentList)
+            WorkingDirectory = $launchSpec.WorkingDirectory
             Error = $null
         }
     }
@@ -257,6 +309,7 @@ function Start-TrackedApp {
             Started = $false
             FilePath = $launchSpec.FilePath
             ArgumentList = @($launchSpec.ArgumentList)
+            WorkingDirectory = $launchSpec.WorkingDirectory
             Error = $_.Exception.Message
         }
     }
@@ -282,7 +335,7 @@ try {
     }
 
     if ($StartupDelaySeconds -gt 0) {
-        Add-RunEvent -Logger $logger -Message "Initial startup delay elapsed." -Type "delay" -Data @{
+        Add-RunEvent -Logger $logger -Message "Waiting before window handling." -Type "delay" -Data @{
             StartupDelaySeconds = $StartupDelaySeconds
         }
         Start-Sleep -Seconds $StartupDelaySeconds
@@ -311,6 +364,7 @@ try {
         }
 
         $windowLookup = Wait-ForWindow `
+            -Logger $logger `
             -ProcessName $entry.ProcessName `
             -Title $entry.Title `
             -TimeoutSeconds $WaitForExistingWindowSeconds `
@@ -320,7 +374,7 @@ try {
         $result.ExistingWindowPolls = $windowLookup.PollCount
         $window = $windowLookup.Window
 
-        if (-not $window) {
+        if (-not $window -and $LaunchMissingApps) {
             Add-RunEvent -Logger $logger -Message "No existing window found. Launching app." -Type "launch_attempt" -Data @{
                 ProcessName = $entry.ProcessName
                 WaitedSeconds = $windowLookup.WaitedSeconds
@@ -337,10 +391,12 @@ try {
                 Add-RunEvent -Logger $logger -Message "Started app." -Type "launched" -Data @{
                     ProcessName = $entry.ProcessName
                     FilePath = $launchResult.FilePath
+                    WorkingDirectory = $launchResult.WorkingDirectory
                     Arguments = @($launchResult.ArgumentList)
                 }
 
                 $postLaunchLookup = Wait-ForWindow `
+                    -Logger $logger `
                     -ProcessName $entry.ProcessName `
                     -Title $entry.Title `
                     -TimeoutSeconds $PostLaunchWindowWaitSeconds `
@@ -355,6 +411,7 @@ try {
                     ProcessName = $entry.ProcessName
                     Error = $launchResult.Error
                     FilePath = $launchResult.FilePath
+                    WorkingDirectory = $launchResult.WorkingDirectory
                 }
             }
         }
@@ -362,6 +419,7 @@ try {
         if (-not $window) {
             Add-RunEvent -Logger $logger -Message "No window found for app." -Type "window_missing" -Data @{
                 ProcessName = $entry.ProcessName
+                LaunchMissingApps = [bool]$LaunchMissingApps
             }
             $results += [pscustomobject]$result
             continue

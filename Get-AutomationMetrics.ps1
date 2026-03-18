@@ -17,8 +17,9 @@ function Get-Average {
 
 $scriptNames = @(
     "Apply-WindowLayout",
-    "Close-PeripheralStartupApps",
+    "Prime-WaveLinkUI",
     "Post-BootCheck",
+    "Install-AppStartupShortcuts",
     "Save-WindowLayout",
     "Update-WindowLayout"
 )
@@ -89,34 +90,20 @@ if ($applyHistory) {
     } | Format-Table -AutoSize
 }
 
-$closeHistory = $histories | Where-Object ScriptName -eq "Close-PeripheralStartupApps" | Select-Object -First 1
-if ($closeHistory) {
-    "Close Peripheral Startup Apps Per-Process Summary"
-    $closeRows = foreach ($run in $closeHistory.Runs) {
-        foreach ($process in @($run.Summary.Processes)) {
-            [pscustomobject]@{
-                ProcessName = $process.ProcessName
-                Seen = $process.Seen
-                Closed = $process.Closed
-                SecondsUntilFirstSeen = $process.SecondsUntilFirstSeen
-                SecondsObservedBeforeClose = $process.SecondsObservedBeforeClose
-                CloseAttempts = $process.CloseAttempts
-            }
+$primeHistory = $histories | Where-Object ScriptName -eq "Prime-WaveLinkUI" | Select-Object -First 1
+if ($primeHistory) {
+    "Prime Wave Link UI Summary"
+    $rows = foreach ($run in $primeHistory.Runs) {
+        [pscustomobject]@{
+            StartedAt = $run.StartedAt
+            Status = $run.Status
+            WaitedForWindowSeconds = $run.Summary.WaitedForWindowSeconds
+            HeldUiSeconds = $run.Summary.HeldUiSeconds
+            WindowClosed = $run.Summary.WindowClosed
         }
     }
 
-    $closeRows | Group-Object ProcessName | ForEach-Object {
-        $rows = $_.Group
-        [pscustomobject]@{
-            ProcessName = $_.Name
-            Samples = $rows.Count
-            SeenCount = @($rows | Where-Object Seen).Count
-            ClosedCount = @($rows | Where-Object Closed).Count
-            AvgSecondsUntilFirstSeen = Get-Average -Values @($rows | ForEach-Object { if ($_.SecondsUntilFirstSeen -ne $null) { [double]$_.SecondsUntilFirstSeen } })
-            AvgSecondsObservedBeforeClose = Get-Average -Values @($rows | ForEach-Object { if ($_.SecondsObservedBeforeClose -ne $null) { [double]$_.SecondsObservedBeforeClose } })
-            AvgCloseAttempts = Get-Average -Values @($rows | ForEach-Object { if ($_.CloseAttempts -ne $null) { [double]$_.CloseAttempts } })
-        }
-    } | Format-Table -AutoSize
+    $rows | Format-Table -AutoSize
 }
 
 $postBootHistory = $histories | Where-Object ScriptName -eq "Post-BootCheck" | Select-Object -First 1
@@ -128,7 +115,7 @@ if ($postBootHistory) {
             Status = $run.Status
             IssueCount = @($run.Summary.Issues).Count
             ApplyStatus = $run.Summary.ApplyRun.Status
-            CloseStatus = $run.Summary.CloseRun.Status
+            PrimeStatus = $run.Summary.PrimeRun.Status
         }
     }
 

@@ -29,6 +29,32 @@ function Save-RunHistory {
     $trimmedRuns | ConvertTo-Json -Depth 10 | Set-Content -Path $Path -Encoding ASCII
 }
 
+function Write-RunConsoleLine {
+    param(
+        [string]$ScriptName,
+        [string]$Type,
+        [string]$Message,
+        [object]$Data = $null
+    )
+
+    $timestamp = Get-Date -Format "HH:mm:ss"
+    $line = "[$timestamp][$ScriptName][$Type] $Message"
+
+    if ($null -ne $Data) {
+        try {
+            $json = $Data | ConvertTo-Json -Compress -Depth 5
+            if ($json.Length -gt 240) {
+                $json = $json.Substring(0, 240) + "..."
+            }
+            $line += " $json"
+        }
+        catch {
+        }
+    }
+
+    Write-Host $line
+}
+
 function New-RunLogger {
     param(
         [string]$ScriptName,
@@ -75,6 +101,8 @@ function Add-RunEvent {
         Message = $Message
         Data = $Data
     }
+
+    Write-RunConsoleLine -ScriptName $Logger.ScriptName -Type $Type -Message $Message -Data $Data
 }
 
 function Complete-RunLogger {
@@ -94,4 +122,9 @@ function Complete-RunLogger {
     $existingRuns = Get-RunHistory -Path $Logger.HistoryPath
     $updatedRuns = @($existingRuns) + [pscustomobject]$Logger.Run
     Save-RunHistory -Path $Logger.HistoryPath -Runs $updatedRuns -MaxRuns $Logger.MaxRuns
+
+    Write-RunConsoleLine -ScriptName $Logger.ScriptName -Type $Status -Message "Run completed." -Data @{
+        DurationSeconds = $Logger.Run.DurationSeconds
+        Summary = $Summary
+    }
 }
