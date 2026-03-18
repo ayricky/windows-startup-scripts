@@ -5,8 +5,7 @@ param(
     [string[]]$ProcessNames = @(
         "StreamDeck",
         "WaveLink",
-        "WaveLinkSE",
-        "rawaccel"
+        "WaveLinkSE"
     )
 )
 

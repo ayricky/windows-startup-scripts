@@ -9,10 +9,12 @@ PowerShell scripts for two startup automations:
 
 - `Apply-WindowLayout.ps1`: waits for `Discord` and `Zen`, launches them if needed, then moves them to the saved size and position
 - `Close-PeripheralStartupApps.ps1`: watches for selected apps, then closes each one after it has been open for the configured amount of time
+- `Post-BootCheck.ps1`: verifies after logon that the main automation ran and that the expected apps/windows reached the desired state
 - `Save-WindowLayout.ps1`: captures the current `Discord` and `Zen` window geometry into `window-layout.json`
 - `Update-WindowLayout.ps1`: re-saves the layout file, with an optional immediate apply
 - `Register-WindowLayoutTask.ps1`: creates the `Apply Window Layout` scheduled task
 - `Register-PeripheralCleanupTask.ps1`: creates the `Close Peripheral Startup Apps` scheduled task
+- `Register-PostBootCheckTask.ps1`: creates the `Post Boot Check` scheduled task
 - `Get-AutomationMetrics.ps1`: summarizes recent run history
 - `RunLogger.ps1`: shared bounded JSON run logging used by the other scripts
 
@@ -31,6 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Save-WindowLayout.ps1
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-WindowLayoutTask.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-PeripheralCleanupTask.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Register-PostBootCheckTask.ps1
 ```
 
 5. Sign out and back in, or run the scripts manually to test.
@@ -53,13 +56,18 @@ Edit `Close-PeripheralStartupApps.ps1` to change:
 - `SecondsOpenBeforeClose`
 - `ProcessNames`
 
+Edit `Post-BootCheck.ps1` to change:
+
+- `InitialDelaySeconds`
+- `LayoutTolerancePixels`
+- `ClosedProcessNames`
+
 Run `Update-WindowLayout.ps1` any time you want to overwrite `window-layout.json` with a new saved layout.
 
 ## Logs And State
 
 - `window-layout.json`: saved local window positions
 - `logs/*.runs.json`: bounded run history, last 100 runs per script
-- `logs/*.log`: older text logs from earlier versions
 
 ## Metrics
 

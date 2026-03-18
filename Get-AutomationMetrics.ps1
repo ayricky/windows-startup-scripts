@@ -18,6 +18,7 @@ function Get-Average {
 $scriptNames = @(
     "Apply-WindowLayout",
     "Close-PeripheralStartupApps",
+    "Post-BootCheck",
     "Save-WindowLayout",
     "Update-WindowLayout"
 )
@@ -116,4 +117,20 @@ if ($closeHistory) {
             AvgCloseAttempts = Get-Average -Values @($rows | ForEach-Object { if ($_.CloseAttempts -ne $null) { [double]$_.CloseAttempts } })
         }
     } | Format-Table -AutoSize
+}
+
+$postBootHistory = $histories | Where-Object ScriptName -eq "Post-BootCheck" | Select-Object -First 1
+if ($postBootHistory) {
+    "Post Boot Check Summary"
+    $rows = foreach ($run in $postBootHistory.Runs) {
+        [pscustomobject]@{
+            StartedAt = $run.StartedAt
+            Status = $run.Status
+            IssueCount = @($run.Summary.Issues).Count
+            ApplyStatus = $run.Summary.ApplyRun.Status
+            CloseStatus = $run.Summary.CloseRun.Status
+        }
+    }
+
+    $rows | Format-Table -AutoSize
 }
