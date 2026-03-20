@@ -181,19 +181,19 @@ try {
     if (Test-Path $ConfigPath) {
         $displayState = Get-DisplayLayoutState
         $config = Read-WindowLayoutConfig -Path $ConfigPath
-        $profileSelection = Select-WindowLayoutProfile -Config $config -DisplayState $displayState
-        $layoutEntries = if ($profileSelection) { @($profileSelection.Profile.Windows) } else { @() }
+        $layoutPlan = Resolve-WindowLayoutPlan -Config $config -DisplayState $displayState
+        $layoutEntries = if ($layoutPlan) { @($layoutPlan.Windows) } else { @() }
 
-        if ($profileSelection) {
-            Add-RunEvent -Logger $logger -Message "Selected layout profile for verification." -Type "profile_selected" -Data @{
-                MatchType = $profileSelection.MatchType
+        if ($layoutPlan) {
+            Add-RunEvent -Logger $logger -Message "Selected layout plan for verification." -Type "profile_selected" -Data @{
+                MatchType = $layoutPlan.MatchType
                 Signature = $displayState.Signature
-                ProfileSignature = $profileSelection.Profile.Signature
+                ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
                 WindowCount = $layoutEntries.Count
             }
         }
         else {
-            Add-RunEvent -Logger $logger -Message "No saved layout profile matched the current display layout." -Type "warning" -Data @{
+            Add-RunEvent -Logger $logger -Message "No saved layout plan matched the current display layout." -Type "warning" -Data @{
                 Signature = $displayState.Signature
             }
         }
@@ -304,7 +304,7 @@ try {
         ApplyRun = if ($applyRun) { $applyRun } else { $null }
         PrimeRun = if ($primeRun) { $primeRun } else { $null }
         DisplaySignature = if ($displayState) { $displayState.Signature } else { $null }
-        ProfileMatchType = if ($profileSelection) { $profileSelection.MatchType } else { $null }
+        ProfileMatchType = if ($layoutPlan) { $layoutPlan.MatchType } else { $null }
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks
         HiddenWindowChecks = $hiddenWindowChecks

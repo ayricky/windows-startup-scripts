@@ -7,6 +7,7 @@ param(
     [string]$ZenLauncherPath = "C:\Program Files\Zen Browser\desktop-launcher\desktop-launcher.exe",
     [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
     [string]$DiscordPath = "",
+    [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe"),
     [switch]$LaunchMissingApps
 )
 
@@ -68,6 +69,7 @@ $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot
     ZenLauncherPath = $ZenLauncherPath
     ZenPath = $ZenPath
     DiscordPath = $DiscordPath
+    SpotifyPath = $SpotifyPath
     LaunchMissingApps = [bool]$LaunchMissingApps
 }
 
@@ -270,6 +272,17 @@ function Resolve-LaunchSpec {
 
             return $discordLaunch
         }
+        '^spotify$' {
+            if (Test-Path $SpotifyPath -ErrorAction SilentlyContinue) {
+                return @{
+                    FilePath = $SpotifyPath
+                    ArgumentList = @()
+                    WorkingDirectory = (Split-Path -Parent $SpotifyPath)
+                }
+            }
+
+            return $null
+        }
         default {
             return $null
         }
@@ -332,25 +345,25 @@ try {
 
     $displayState = Get-DisplayLayoutState
     $config = Read-WindowLayoutConfig -Path $ConfigPath
-    $profileSelection = Select-WindowLayoutProfile -Config $config -DisplayState $displayState
-    if (-not $profileSelection) {
-        Add-RunEvent -Logger $logger -Message "No saved layout profile was available." -Type "skipped" -Data @{
+    $layoutPlan = Resolve-WindowLayoutPlan -Config $config -DisplayState $displayState
+    if (-not $layoutPlan) {
+        Add-RunEvent -Logger $logger -Message "No saved layout plan was available." -Type "skipped" -Data @{
             ConfigPath = $ConfigPath
             Signature = $displayState.Signature
         }
         Complete-RunLogger -Logger $logger -Status "skipped" -Summary @{
-            Reason = "No layout profile available."
+            Reason = "No layout plan available."
             ConfigPath = $ConfigPath
             Signature = $displayState.Signature
         }
         return
     }
 
-    $layout = @($profileSelection.Profile.Windows)
-    Add-RunEvent -Logger $logger -Message "Selected layout profile." -Type "profile_selected" -Data @{
-        MatchType = $profileSelection.MatchType
+    $layout = @($layoutPlan.Windows)
+    Add-RunEvent -Logger $logger -Message "Selected layout plan." -Type "profile_selected" -Data @{
+        MatchType = $layoutPlan.MatchType
         Signature = $displayState.Signature
-        ProfileSignature = $profileSelection.Profile.Signature
+        ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
         WindowCount = $layout.Count
     }
 
@@ -483,9 +496,9 @@ try {
     }
 
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
-        MatchType = $profileSelection.MatchType
+        MatchType = $layoutPlan.MatchType
         Signature = $displayState.Signature
-        ProfileSignature = $profileSelection.Profile.Signature
+        ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
         Apps = $results
     }
 }

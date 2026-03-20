@@ -22,20 +22,24 @@ try {
     Add-RunEvent -Logger $logger -Message "Running save script." -Type "step" -Data @{
         ScriptPath = $saveScript
     }
+    $global:LASTEXITCODE = 0
     & $saveScript -ConfigPath $configPath
+    $saveExitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "Save script exited with code $LASTEXITCODE."
+    if ($saveExitCode -ne 0) {
+        throw "Save script exited with code $saveExitCode."
     }
 
     if ($ApplyAfterSave) {
         Add-RunEvent -Logger $logger -Message "Running apply script." -Type "step" -Data @{
             ScriptPath = $applyScript
         }
+        $global:LASTEXITCODE = 0
         & $applyScript -ConfigPath $configPath -StartupDelaySeconds 0 -WaitForExistingWindowSeconds 5 -PollIntervalSeconds 1 -PostLaunchWindowWaitSeconds 5
+        $applyExitCode = if ($null -ne $LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "Apply script exited with code $LASTEXITCODE."
+        if ($applyExitCode -ne 0) {
+            throw "Apply script exited with code $applyExitCode."
         }
     }
 

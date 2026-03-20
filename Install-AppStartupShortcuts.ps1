@@ -1,7 +1,8 @@
 param(
     [string]$StartupFolder = (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"),
     [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
-    [string]$DiscordUpdatePath = (Join-Path $env:LOCALAPPDATA "Discord\Update.exe")
+    [string]$DiscordUpdatePath = (Join-Path $env:LOCALAPPDATA "Discord\Update.exe"),
+    [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe")
 )
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -11,6 +12,7 @@ $logger = New-RunLogger -ScriptName "Install-AppStartupShortcuts" -ScriptRoot $s
     StartupFolder = $StartupFolder
     ZenPath = $ZenPath
     DiscordUpdatePath = $DiscordUpdatePath
+    SpotifyPath = $SpotifyPath
 }
 
 function New-StartupShortcut {
@@ -73,6 +75,26 @@ try {
         Arguments = @("--processStart", "Discord.exe")
     }
 
+    if (Test-Path $SpotifyPath) {
+        $spotifyShortcutPath = Join-Path $StartupFolder "Spotify.lnk"
+        New-StartupShortcut `
+            -ShortcutPath $spotifyShortcutPath `
+            -TargetPath $SpotifyPath `
+            -Arguments @() `
+            -WorkingDirectory (Split-Path -Parent $SpotifyPath) `
+            -Description "Start Spotify at logon"
+
+        Add-RunEvent -Logger $logger -Message "Created Spotify startup shortcut." -Type "shortcut_created" -Data @{
+            ShortcutPath = $spotifyShortcutPath
+            TargetPath = $SpotifyPath
+        }
+    }
+    else {
+        Add-RunEvent -Logger $logger -Message "Spotify executable was not found. Skipping Spotify startup shortcut." -Type "skipped" -Data @{
+            SpotifyPath = $SpotifyPath
+        }
+    }
+
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         StartupFolder = $StartupFolder
         Shortcuts = @(
@@ -86,6 +108,11 @@ try {
                 ShortcutPath = $discordShortcutPath
                 TargetPath = $DiscordUpdatePath
                 Arguments = @("--processStart", "Discord.exe")
+            },
+            [pscustomobject]@{
+                Name = "Spotify"
+                ShortcutPath = if (Test-Path $SpotifyPath) { (Join-Path $StartupFolder "Spotify.lnk") } else { $null }
+                TargetPath = if (Test-Path $SpotifyPath) { $SpotifyPath } else { $null }
             }
         )
     }

@@ -1,6 +1,6 @@
 param(
     [string]$ConfigPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "window-layout.json"),
-    [string[]]$ProcessNames = @("Discord", "zen")
+    [string[]]$ProcessNames = @("Discord", "zen", "Spotify")
 )
 
 $signature = @'
@@ -171,8 +171,10 @@ try {
         Complete-RunLogger -Logger $logger -Status "failed" -Summary @{
             Error = "No matching windows were captured."
         }
-        throw "No matching windows were captured. Arrange Discord and Zen, then run this script from your desktop session."
+        throw "No matching windows were captured. Arrange Discord, Zen, and Spotify, then run this script from your desktop session."
     }
+
+    $dynamicLayout = ConvertTo-DynamicWindowLayoutEntries -Windows $layout -DisplayState $displayState
 
     $config = Read-WindowLayoutConfig -Path $ConfigPath
     $profiles = @()
@@ -203,7 +205,8 @@ try {
     }
 
     $configToSave = [pscustomobject]@{
-        Version = 2
+        Version = 3
+        DynamicWindows = @($dynamicLayout)
         Profiles = @($profiles)
     }
 
@@ -211,6 +214,7 @@ try {
     Add-RunEvent -Logger $logger -Message "Saved layout file." -Type "saved" -Data @{
         ConfigPath = $ConfigPath
         CapturedWindows = $layout.Count
+        DynamicWindows = $dynamicLayout.Count
         Signature = $displayState.Signature
         UpdatedExistingProfile = $updatedExisting
     }
@@ -218,6 +222,7 @@ try {
         ConfigPath = $ConfigPath
         Signature = $displayState.Signature
         UpdatedExistingProfile = $updatedExisting
+        DynamicWindows = $dynamicLayout
         CapturedWindows = $layout
     }
     Write-Output "Saved layout to $ConfigPath"
