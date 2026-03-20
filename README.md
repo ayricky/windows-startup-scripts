@@ -4,6 +4,7 @@ Windows logon automation for:
 
 - starting `Zen` and `Discord`
 - restoring the saved `Zen` and `Discord` layout
+- selecting the right saved layout for the monitor arrangement active at boot
 - briefly surfacing `Wave Link`, then closing only its window
 - applying `RawAccel` with `writer.exe settings.json`
 
@@ -11,6 +12,7 @@ Windows logon automation for:
 
 - `Install-AppStartupShortcuts.ps1`: creates Startup-folder shortcuts for `Zen` and `Discord`
 - `Apply-WindowLayout.ps1`: waits for `Discord` and `Zen`, then restores the saved size and position
+- `DisplayLayoutProfiles.ps1`: detects the current monitor arrangement and selects the matching saved layout profile
 - `Prime-WaveLinkUI.ps1`: opens the full `Wave Link` UI briefly after sign-in, then closes only the window
 - `Post-BootCheck.ps1`: verifies that layout and Wave Link priming ran and logs issues
 - `Register-WindowLayoutTask.ps1`: registers the `Apply Window Layout` task
@@ -57,6 +59,7 @@ Run `Update-WindowLayout.ps1` any time your monitor layout changes.
 ## State
 
 - `window-layout.json`: saved window positions
+- `window-layout.json` can hold multiple profiles keyed by monitor layout signature
 - `logs/*.runs.json`: last 100 runs per script
 - Startup shortcuts: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
 

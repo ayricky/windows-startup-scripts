@@ -57,6 +57,7 @@ Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
 
 $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot -Parameters @{
     ConfigPath = $ConfigPath
@@ -329,9 +330,28 @@ try {
         return
     }
 
-    $layout = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-    if ($layout -isnot [System.Collections.IEnumerable]) {
-        $layout = @($layout)
+    $displayState = Get-DisplayLayoutState
+    $config = Read-WindowLayoutConfig -Path $ConfigPath
+    $profileSelection = Select-WindowLayoutProfile -Config $config -DisplayState $displayState
+    if (-not $profileSelection) {
+        Add-RunEvent -Logger $logger -Message "No saved layout profile was available." -Type "skipped" -Data @{
+            ConfigPath = $ConfigPath
+            Signature = $displayState.Signature
+        }
+        Complete-RunLogger -Logger $logger -Status "skipped" -Summary @{
+            Reason = "No layout profile available."
+            ConfigPath = $ConfigPath
+            Signature = $displayState.Signature
+        }
+        return
+    }
+
+    $layout = @($profileSelection.Profile.Windows)
+    Add-RunEvent -Logger $logger -Message "Selected layout profile." -Type "profile_selected" -Data @{
+        MatchType = $profileSelection.MatchType
+        Signature = $displayState.Signature
+        ProfileSignature = $profileSelection.Profile.Signature
+        WindowCount = $layout.Count
     }
 
     if ($StartupDelaySeconds -gt 0) {
@@ -463,6 +483,9 @@ try {
     }
 
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
+        MatchType = $profileSelection.MatchType
+        Signature = $displayState.Signature
+        ProfileSignature = $profileSelection.Profile.Signature
         Apps = $results
     }
 }

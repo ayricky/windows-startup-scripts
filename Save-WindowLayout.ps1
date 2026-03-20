@@ -44,6 +44,7 @@ Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
 
 $logger = New-RunLogger -ScriptName "Save-WindowLayout" -ScriptRoot $scriptRoot -Parameters @{
     ConfigPath = $ConfigPath
@@ -119,6 +120,13 @@ function Test-IgnoredWindow {
 try {
     Add-RunEvent -Logger $logger -Message "Run started." -Type "start"
 
+    $displayState = Get-DisplayLayoutState
+    Add-RunEvent -Logger $logger -Message "Detected current display layout." -Type "display_detected" -Data @{
+        Signature = $displayState.Signature
+        MonitorCount = $displayState.MonitorCount
+        VirtualScreen = $displayState.VirtualScreen
+    }
+
     $windows = Get-TopLevelWindows
     $layout = foreach ($processName in $ProcessNames) {
         $match = $windows |
@@ -166,13 +174,50 @@ try {
         throw "No matching windows were captured. Arrange Discord and Zen, then run this script from your desktop session."
     }
 
-    $layout | ConvertTo-Json -Depth 3 | Set-Content -Path $ConfigPath -Encoding ASCII
+    $config = Read-WindowLayoutConfig -Path $ConfigPath
+    $profiles = @()
+    $updatedExisting = $false
+
+    foreach ($profile in @($config.Profiles)) {
+        if ($profile.Signature -and $profile.Signature -eq $displayState.Signature) {
+            $profiles += [pscustomobject]@{
+                Signature = $displayState.Signature
+                DisplayState = $displayState
+                CapturedAt = [DateTimeOffset]::Now.ToString("o")
+                Windows = @($layout)
+            }
+            $updatedExisting = $true
+            continue
+        }
+
+        $profiles += $profile
+    }
+
+    if (-not $updatedExisting) {
+        $profiles += [pscustomobject]@{
+            Signature = $displayState.Signature
+            DisplayState = $displayState
+            CapturedAt = [DateTimeOffset]::Now.ToString("o")
+            Windows = @($layout)
+        }
+    }
+
+    $configToSave = [pscustomobject]@{
+        Version = 2
+        Profiles = @($profiles)
+    }
+
+    $configToSave | ConvertTo-Json -Depth 6 | Set-Content -Path $ConfigPath -Encoding ASCII
     Add-RunEvent -Logger $logger -Message "Saved layout file." -Type "saved" -Data @{
         ConfigPath = $ConfigPath
         CapturedWindows = $layout.Count
+        Signature = $displayState.Signature
+        UpdatedExistingProfile = $updatedExisting
     }
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         ConfigPath = $ConfigPath
+        Signature = $displayState.Signature
+        UpdatedExistingProfile = $updatedExisting
         CapturedWindows = $layout
     }
     Write-Output "Saved layout to $ConfigPath"

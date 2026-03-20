@@ -13,6 +13,7 @@ param(
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
 
 $logger = New-RunLogger -ScriptName "Post-BootCheck" -ScriptRoot $scriptRoot -Parameters @{
     InitialDelaySeconds = $InitialDelaySeconds
@@ -178,11 +179,26 @@ try {
     $layoutChecks = @()
     $windows = Get-TopLevelWindows
     if (Test-Path $ConfigPath) {
-        $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-        if ($config -isnot [System.Collections.IEnumerable]) {
-            $config = @($config)
+        $displayState = Get-DisplayLayoutState
+        $config = Read-WindowLayoutConfig -Path $ConfigPath
+        $profileSelection = Select-WindowLayoutProfile -Config $config -DisplayState $displayState
+        $layoutEntries = if ($profileSelection) { @($profileSelection.Profile.Windows) } else { @() }
+
+        if ($profileSelection) {
+            Add-RunEvent -Logger $logger -Message "Selected layout profile for verification." -Type "profile_selected" -Data @{
+                MatchType = $profileSelection.MatchType
+                Signature = $displayState.Signature
+                ProfileSignature = $profileSelection.Profile.Signature
+                WindowCount = $layoutEntries.Count
+            }
         }
-        foreach ($entry in $config) {
+        else {
+            Add-RunEvent -Logger $logger -Message "No saved layout profile matched the current display layout." -Type "warning" -Data @{
+                Signature = $displayState.Signature
+            }
+        }
+
+        foreach ($entry in $layoutEntries) {
             $window = Get-BestWindowMatch -Windows $windows -ProcessName $entry.ProcessName -Title $entry.Title
 
             if (-not $window) {
@@ -287,6 +303,8 @@ try {
         SessionWindowStart = $sessionWindowStart.ToString("o")
         ApplyRun = if ($applyRun) { $applyRun } else { $null }
         PrimeRun = if ($primeRun) { $primeRun } else { $null }
+        DisplaySignature = if ($displayState) { $displayState.Signature } else { $null }
+        ProfileMatchType = if ($profileSelection) { $profileSelection.MatchType } else { $null }
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks
         HiddenWindowChecks = $hiddenWindowChecks
