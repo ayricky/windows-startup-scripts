@@ -122,9 +122,8 @@ try {
 
     $displayState = Get-DisplayLayoutState
     Add-RunEvent -Logger $logger -Message "Detected current display layout." -Type "display_detected" -Data @{
-        Signature = $displayState.Signature
         MonitorCount = $displayState.MonitorCount
-        VirtualScreen = $displayState.VirtualScreen
+        Screens = $displayState.Screens
     }
 
     $windows = Get-TopLevelWindows
@@ -176,38 +175,9 @@ try {
 
     $dynamicLayout = ConvertTo-DynamicWindowLayoutEntries -Windows $layout -DisplayState $displayState
 
-    $config = Read-WindowLayoutConfig -Path $ConfigPath
-    $profiles = @()
-    $updatedExisting = $false
-
-    foreach ($profile in @($config.Profiles)) {
-        if ($profile.Signature -and $profile.Signature -eq $displayState.Signature) {
-            $profiles += [pscustomobject]@{
-                Signature = $displayState.Signature
-                DisplayState = $displayState
-                CapturedAt = [DateTimeOffset]::Now.ToString("o")
-                Windows = @($layout)
-            }
-            $updatedExisting = $true
-            continue
-        }
-
-        $profiles += $profile
-    }
-
-    if (-not $updatedExisting) {
-        $profiles += [pscustomobject]@{
-            Signature = $displayState.Signature
-            DisplayState = $displayState
-            CapturedAt = [DateTimeOffset]::Now.ToString("o")
-            Windows = @($layout)
-        }
-    }
-
     $configToSave = [pscustomobject]@{
         Version = 3
         DynamicWindows = @($dynamicLayout)
-        Profiles = @($profiles)
     }
 
     $configToSave | ConvertTo-Json -Depth 6 | Set-Content -Path $ConfigPath -Encoding ASCII
@@ -215,13 +185,9 @@ try {
         ConfigPath = $ConfigPath
         CapturedWindows = $layout.Count
         DynamicWindows = $dynamicLayout.Count
-        Signature = $displayState.Signature
-        UpdatedExistingProfile = $updatedExisting
     }
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         ConfigPath = $ConfigPath
-        Signature = $displayState.Signature
-        UpdatedExistingProfile = $updatedExisting
         DynamicWindows = $dynamicLayout
         CapturedWindows = $layout
     }

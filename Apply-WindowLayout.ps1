@@ -362,8 +362,6 @@ try {
     $layout = @($layoutPlan.Windows)
     Add-RunEvent -Logger $logger -Message "Selected layout plan." -Type "profile_selected" -Data @{
         MatchType = $layoutPlan.MatchType
-        Signature = $displayState.Signature
-        ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
         WindowCount = $layout.Count
     }
 
@@ -497,8 +495,6 @@ try {
 
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         MatchType = $layoutPlan.MatchType
-        Signature = $displayState.Signature
-        ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
         Apps = $results
     }
 }

@@ -187,14 +187,12 @@ try {
         if ($layoutPlan) {
             Add-RunEvent -Logger $logger -Message "Selected layout plan for verification." -Type "profile_selected" -Data @{
                 MatchType = $layoutPlan.MatchType
-                Signature = $displayState.Signature
-                ProfileSignature = if ($layoutPlan.Profile) { $layoutPlan.Profile.Signature } else { $null }
                 WindowCount = $layoutEntries.Count
             }
         }
         else {
             Add-RunEvent -Logger $logger -Message "No saved layout plan matched the current display layout." -Type "warning" -Data @{
-                Signature = $displayState.Signature
+                MonitorCount = $displayState.MonitorCount
             }
         }
 
@@ -303,7 +301,7 @@ try {
         SessionWindowStart = $sessionWindowStart.ToString("o")
         ApplyRun = if ($applyRun) { $applyRun } else { $null }
         PrimeRun = if ($primeRun) { $primeRun } else { $null }
-        DisplaySignature = if ($displayState) { $displayState.Signature } else { $null }
+        DisplayState = if ($displayState) { $displayState } else { $null }
         ProfileMatchType = if ($layoutPlan) { $layoutPlan.MatchType } else { $null }
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks

@@ -59,7 +59,7 @@ Run `Update-WindowLayout.ps1` any time you move the apps to a new desired positi
 ## State
 
 - `window-layout.json`: saved window positions
-- `window-layout.json` stores monitor-relative window positions and keeps exact profiles as fallback
+- `window-layout.json` stores monitor-relative window positions only
 - `logs/*.runs.json`: last 100 runs per script
 - Startup shortcuts: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
 
