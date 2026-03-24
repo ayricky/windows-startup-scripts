@@ -161,6 +161,86 @@ function Test-WithinTolerance {
     return ([math]::Abs($Actual - $Expected) -le $Tolerance)
 }
 
+function Get-LayoutChecks {
+    param(
+        [object[]]$Windows,
+        [object[]]$LayoutEntries,
+        [int]$Tolerance
+    )
+
+    $checks = foreach ($entry in @($LayoutEntries)) {
+        $window = Get-BestWindowMatch -Windows $Windows -ProcessName $entry.ProcessName -Title $entry.Title
+
+        if (-not $window) {
+            [pscustomobject]@{
+                ProcessName = $entry.ProcessName
+                Found = $false
+                InPosition = $false
+                Reason = "Window not found"
+            }
+            continue
+        }
+
+        $inPosition =
+            (Test-WithinTolerance -Actual $window.Left -Expected ([int]$entry.Left) -Tolerance $Tolerance) -and
+            (Test-WithinTolerance -Actual $window.Top -Expected ([int]$entry.Top) -Tolerance $Tolerance) -and
+            (Test-WithinTolerance -Actual $window.Width -Expected ([int]$entry.Width) -Tolerance $Tolerance) -and
+            (Test-WithinTolerance -Actual $window.Height -Expected ([int]$entry.Height) -Tolerance $Tolerance)
+
+        [pscustomobject]@{
+            ProcessName = $entry.ProcessName
+            Found = $true
+            InPosition = $inPosition
+            Reason = if ($inPosition) { "OK" } else { "Window found but geometry differs" }
+            ActualLeft = $window.Left
+            ActualTop = $window.Top
+            ActualWidth = $window.Width
+            ActualHeight = $window.Height
+            ExpectedLeft = [int]$entry.Left
+            ExpectedTop = [int]$entry.Top
+            ExpectedWidth = [int]$entry.Width
+            ExpectedHeight = [int]$entry.Height
+        }
+    }
+
+    return @($checks)
+}
+
+function Invoke-RemediationScript {
+    param(
+        [hashtable]$Logger,
+        [string]$Name,
+        [string]$ScriptPath,
+        [string[]]$ArgumentList = @()
+    )
+
+    $startedAt = [DateTimeOffset]::Now
+    Add-RunEvent -Logger $Logger -Message "Starting remediation script." -Type "remediation_start" -Data @{
+        Name = $Name
+        ScriptPath = $ScriptPath
+        Arguments = @($ArgumentList)
+    }
+
+    $process = Start-Process `
+        -FilePath "powershell.exe" `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $ScriptPath) + @($ArgumentList) `
+        -WindowStyle Hidden `
+        -PassThru `
+        -Wait
+
+    $result = [pscustomobject]@{
+        Name = $Name
+        ScriptPath = $ScriptPath
+        Arguments = @($ArgumentList)
+        StartedAt = $startedAt.ToString("o")
+        ExitCode = $process.ExitCode
+        Succeeded = ($process.ExitCode -eq 0)
+    }
+
+    Add-RunEvent -Logger $Logger -Message "Finished remediation script." -Type "remediation_complete" -Data $result
+    return $result
+}
+
 try {
     Add-RunEvent -Logger $logger -Message "Run started." -Type "start"
 
@@ -178,6 +258,9 @@ try {
 
     $layoutChecks = @()
     $windows = Get-TopLevelWindows
+    $displayState = $null
+    $layoutPlan = $null
+    $layoutEntries = @()
     if (Test-Path $ConfigPath) {
         $displayState = Get-DisplayLayoutState
         $config = Read-WindowLayoutConfig -Path $ConfigPath
@@ -195,41 +278,7 @@ try {
                 MonitorCount = $displayState.MonitorCount
             }
         }
-
-        foreach ($entry in $layoutEntries) {
-            $window = Get-BestWindowMatch -Windows $windows -ProcessName $entry.ProcessName -Title $entry.Title
-
-            if (-not $window) {
-                $layoutChecks += [pscustomobject]@{
-                    ProcessName = $entry.ProcessName
-                    Found = $false
-                    InPosition = $false
-                    Reason = "Window not found"
-                }
-                continue
-            }
-
-            $inPosition =
-                (Test-WithinTolerance -Actual $window.Left -Expected ([int]$entry.Left) -Tolerance $LayoutTolerancePixels) -and
-                (Test-WithinTolerance -Actual $window.Top -Expected ([int]$entry.Top) -Tolerance $LayoutTolerancePixels) -and
-                (Test-WithinTolerance -Actual $window.Width -Expected ([int]$entry.Width) -Tolerance $LayoutTolerancePixels) -and
-                (Test-WithinTolerance -Actual $window.Height -Expected ([int]$entry.Height) -Tolerance $LayoutTolerancePixels)
-
-            $layoutChecks += [pscustomobject]@{
-                ProcessName = $entry.ProcessName
-                Found = $true
-                InPosition = $inPosition
-                Reason = if ($inPosition) { "OK" } else { "Window found but geometry differs" }
-                ActualLeft = $window.Left
-                ActualTop = $window.Top
-                ActualWidth = $window.Width
-                ActualHeight = $window.Height
-                ExpectedLeft = [int]$entry.Left
-                ExpectedTop = [int]$entry.Top
-                ExpectedWidth = [int]$entry.Width
-                ExpectedHeight = [int]$entry.Height
-            }
-        }
+        $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -Tolerance $LayoutTolerancePixels
     }
     else {
         Add-RunEvent -Logger $logger -Message "Layout config not found." -Type "warning" -Data @{
@@ -237,22 +286,75 @@ try {
         }
     }
 
-    $processChecks = foreach ($processName in $ClosedProcessNames) {
+    $processChecks = @(
+        foreach ($processName in $ClosedProcessNames) {
         $running = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
         [pscustomobject]@{
             ProcessName = $processName
             Running = ($running.Count -gt 0)
             Pids = @($running | Select-Object -ExpandProperty Id)
         }
-    }
+        }
+    )
 
-    $hiddenWindowChecks = foreach ($processName in $HiddenWindowProcessNames) {
+    $hiddenWindowChecks = @(
+        foreach ($processName in $HiddenWindowProcessNames) {
         $window = Get-BestWindowMatch -Windows $windows -ProcessName $processName -Title ""
         [pscustomobject]@{
             ProcessName = $processName
             WindowVisible = [bool]$window
             WindowTitle = if ($window) { $window.Title } else { $null }
             Handle = if ($window) { $window.Handle } else { $null }
+        }
+        }
+    )
+
+    $layoutNeedsRemediation = @($layoutChecks | Where-Object { -not $_.Found -or -not $_.InPosition }).Count -gt 0
+    $primeNeedsRemediation = (-not $primeRun) -or ($primeRun.Status -notin @("success", "skipped"))
+    $remediation = [ordered]@{
+        Layout = $null
+        PrimeWaveLink = $null
+    }
+
+    if ($primeNeedsRemediation) {
+        $primeScriptPath = Join-Path $scriptRoot "Prime-WaveLinkUI.ps1"
+        if (Test-Path $primeScriptPath) {
+            $remediation.PrimeWaveLink = Invoke-RemediationScript `
+                -Logger $logger `
+                -Name "Prime-WaveLinkUI" `
+                -ScriptPath $primeScriptPath `
+                -ArgumentList @("-InitialDelaySeconds", "0", "-WaitForWindowSeconds", "20", "-HoldUiSeconds", "8")
+
+            $primeRuns = Get-RunHistory -Path (Join-Path $scriptRoot "logs\Prime-WaveLinkUI.runs.json")
+            $primeRun = @($primeRuns | Where-Object { ([DateTimeOffset]$_.StartedAt) -ge ([DateTimeOffset]$remediation.PrimeWaveLink.StartedAt) } | Select-Object -Last 1)[0]
+        }
+    }
+
+    if ($layoutNeedsRemediation -and $layoutEntries.Count -gt 0) {
+        $applyScriptPath = Join-Path $scriptRoot "Apply-WindowLayout.ps1"
+        if (Test-Path $applyScriptPath) {
+            $remediation.Layout = Invoke-RemediationScript `
+                -Logger $logger `
+                -Name "Apply-WindowLayout" `
+                -ScriptPath $applyScriptPath `
+                -ArgumentList @("-StartupDelaySeconds", "0", "-WaitForExistingWindowSeconds", "20", "-PollIntervalSeconds", "1")
+
+            $applyRuns = Get-RunHistory -Path (Join-Path $scriptRoot "logs\Apply-WindowLayout.runs.json")
+            $applyRun = @($applyRuns | Where-Object { ([DateTimeOffset]$_.StartedAt) -ge ([DateTimeOffset]$remediation.Layout.StartedAt) } | Select-Object -Last 1)[0]
+
+            $windows = Get-TopLevelWindows
+            $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -Tolerance $LayoutTolerancePixels
+            $hiddenWindowChecks = @(
+                foreach ($processName in $HiddenWindowProcessNames) {
+                    $window = Get-BestWindowMatch -Windows $windows -ProcessName $processName -Title ""
+                    [pscustomobject]@{
+                        ProcessName = $processName
+                        WindowVisible = [bool]$window
+                        WindowTitle = if ($window) { $window.Title } else { $null }
+                        Handle = if ($window) { $window.Handle } else { $null }
+                    }
+                }
+            )
         }
     }
 
@@ -267,7 +369,7 @@ try {
     if (-not $primeRun) {
         $issues += "Prime-WaveLinkUI did not run after boot."
     }
-    elseif ($primeRun.Status -ne "success") {
+    elseif ($primeRun.Status -notin @("success", "skipped")) {
         $issues += "Prime-WaveLinkUI last run after boot was $($primeRun.Status)."
     }
 
@@ -306,6 +408,7 @@ try {
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks
         HiddenWindowChecks = $hiddenWindowChecks
+        Remediation = [pscustomobject]$remediation
         Issues = $issues
     }
 }

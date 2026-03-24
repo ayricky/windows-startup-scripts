@@ -118,6 +118,10 @@ function Get-VisibleWaveLinkWindow {
     return $windows | Sort-Object Area -Descending | Select-Object -First 1
 }
 
+function Get-WaveLinkProcesses {
+    return @(Get-Process -Name "WaveLink" -ErrorAction SilentlyContinue)
+}
+
 try {
     Add-RunEvent -Logger $logger -Message "Run started." -Type "start"
 
@@ -132,40 +136,71 @@ try {
         Start-Sleep -Seconds $InitialDelaySeconds
     }
 
-    Start-Process -FilePath $WaveLinkPath | Out-Null
-    Add-RunEvent -Logger $logger -Message "Requested normal Wave Link launch." -Type "launch_requested" -Data @{
-        WaveLinkPath = $WaveLinkPath
-    }
-
     $window = $null
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $pollCount = 0
 
-    while ($stopwatch.Elapsed.TotalSeconds -lt $WaitForWindowSeconds) {
-        $window = Get-VisibleWaveLinkWindow
-        if ($window) {
-            break
+    $window = Get-VisibleWaveLinkWindow
+    if ($window) {
+        Add-RunEvent -Logger $logger -Message "Wave Link window was already visible." -Type "window_detected" -Data @{
+            ProcessId = $window.ProcessId
+            Title = $window.Title
+            WaitedSeconds = 0
+        }
+    }
+    else {
+        $waveLinkWorkingDirectory = Split-Path -Parent $WaveLinkPath
+        Start-Process -FilePath $WaveLinkPath -WorkingDirectory $waveLinkWorkingDirectory -WindowStyle Normal | Out-Null
+        Add-RunEvent -Logger $logger -Message "Requested normal Wave Link launch." -Type "launch_requested" -Data @{
+            WaveLinkPath = $WaveLinkPath
+            WorkingDirectory = $waveLinkWorkingDirectory
         }
 
-        $pollCount++
-        if (($pollCount % 5) -eq 0) {
-            Add-RunEvent -Logger $logger -Message "Still waiting for Wave Link window." -Type "waiting" -Data @{
-                WaitedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
-                PollCount = $pollCount
+        while ($stopwatch.Elapsed.TotalSeconds -lt $WaitForWindowSeconds) {
+            $window = Get-VisibleWaveLinkWindow
+            if ($window) {
+                break
             }
-        }
 
-        Start-Sleep -Seconds $PollSeconds
+            $pollCount++
+            if (($pollCount % 5) -eq 0) {
+                Add-RunEvent -Logger $logger -Message "Still waiting for Wave Link window." -Type "waiting" -Data @{
+                    WaitedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+                    PollCount = $pollCount
+                }
+            }
+
+            Start-Sleep -Seconds $PollSeconds
+        }
     }
 
     if (-not $window) {
+        $backgroundProcesses = Get-WaveLinkProcesses
+        if ($backgroundProcesses.Count -gt 0) {
+            Add-RunEvent -Logger $logger -Message "Wave Link stayed background-only; no visible UI appeared." -Type "warning" -Data @{
+                WaitedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+                ProcessIds = @($backgroundProcesses | Select-Object -ExpandProperty Id)
+            }
+            Complete-RunLogger -Logger $logger -Status "skipped" -Summary @{
+                UiPrimed = $false
+                WindowDetected = $false
+                WindowClosed = $false
+                WaitedForWindowSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+                BackgroundRunning = $true
+                BackgroundPids = @($backgroundProcesses | Select-Object -ExpandProperty Id)
+            }
+            return
+        }
+
         throw "Wave Link window did not appear within $WaitForWindowSeconds seconds."
     }
 
-    Add-RunEvent -Logger $logger -Message "Wave Link window detected." -Type "window_detected" -Data @{
-        WaitedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
-        ProcessId = $window.ProcessId
-        Title = $window.Title
+    if ($stopwatch.Elapsed.TotalSeconds -gt 0) {
+        Add-RunEvent -Logger $logger -Message "Wave Link window detected." -Type "window_detected" -Data @{
+            WaitedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+            ProcessId = $window.ProcessId
+            Title = $window.Title
+        }
     }
 
     if ($HoldUiSeconds -gt 0) {
@@ -198,6 +233,7 @@ try {
     }
 
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
+        UiPrimed = $true
         WindowDetected = $true
         WindowClosed = $windowClosed
         WaitedForWindowSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)

@@ -11,10 +11,10 @@ Windows logon automation for:
 ## Scripts
 
 - `Install-AppStartupShortcuts.ps1`: creates Startup-folder shortcuts for `Zen`, `Discord`, and `Spotify`
-- `Apply-WindowLayout.ps1`: waits for `Discord`, `Zen`, and `Spotify`, then restores the saved size and position
+- `Apply-WindowLayout.ps1`: waits for `Discord`, `Zen`, and `Spotify`, restores the saved size and position, and maximizes `Zen`
 - `DisplayLayoutProfiles.ps1`: maps each saved window to a monitor and recalculates its position from that monitor's current bounds
-- `Prime-WaveLinkUI.ps1`: opens the full `Wave Link` UI briefly after sign-in, then closes only the window
-- `Post-BootCheck.ps1`: verifies that layout and Wave Link priming ran and logs issues
+- `Prime-WaveLinkUI.ps1`: tries to surface the full `Wave Link` UI briefly after sign-in, then closes only the window; if Wave Link stays background-only, the run is logged as skipped instead of failed
+- `Post-BootCheck.ps1`: verifies that layout and Wave Link priming ran, then retries them once if it finds drift or a missed primer run
 - `Register-WindowLayoutTask.ps1`: registers the `Apply Window Layout` task
 - `Register-WaveLinkPrimerTask.ps1`: registers the `Prime Wave Link UI` task
 - `Register-PostBootCheckTask.ps1`: registers the `Post Boot Check` task

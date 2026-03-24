@@ -8,6 +8,7 @@ param(
     [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
     [string]$DiscordPath = "",
     [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe"),
+    [string[]]$MaximizeProcessNames = @("zen"),
     [switch]$LaunchMissingApps
 )
 
@@ -70,12 +71,14 @@ $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot
     ZenPath = $ZenPath
     DiscordPath = $DiscordPath
     SpotifyPath = $SpotifyPath
+    MaximizeProcessNames = $MaximizeProcessNames
     LaunchMissingApps = [bool]$LaunchMissingApps
 }
 
 $swpNoZOrder = 0x0004
 $swpNoActivate = 0x0010
 $swRestore = 9
+$swMaximize = 3
 
 function Get-TopLevelWindows {
     $windows = New-Object System.Collections.Generic.List[object]
@@ -487,6 +490,16 @@ try {
         else {
             Add-RunEvent -Logger $logger -Message "Failed to position app window." -Type "position_failed" -Data @{
                 ProcessName = $entry.ProcessName
+            }
+        }
+
+        if ($moved -and ($MaximizeProcessNames -icontains $entry.ProcessName)) {
+            Start-Sleep -Milliseconds 150
+            $maximized = [WindowLayoutApplyNative]::ShowWindowAsync($hWnd, $swMaximize)
+            $result.Maximized = [bool]$maximized
+            Add-RunEvent -Logger $logger -Message "Maximized app window." -Type "maximized" -Data @{
+                ProcessName = $entry.ProcessName
+                Maximized = [bool]$maximized
             }
         }
 
