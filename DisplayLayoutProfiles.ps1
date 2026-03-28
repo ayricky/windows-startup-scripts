@@ -147,9 +147,14 @@ function Resolve-DynamicWindowLayoutEntries {
     )
 
     $resolvedEntries = foreach ($entry in @($DynamicWindows)) {
-        $screen = @($DisplayState.Screens | Where-Object { $_.DeviceName -eq $entry.MonitorDeviceName } | Select-Object -First 1)[0]
-        if (-not $screen -and $entry.PSObject.Properties.Name -contains "MonitorRole") {
+        $screen = $null
+
+        if ($entry.PSObject.Properties.Name -contains "MonitorRole") {
             $screen = @($DisplayState.Screens | Where-Object { $_.Role -eq $entry.MonitorRole } | Select-Object -First 1)[0]
+        }
+
+        if (-not $screen -and $entry.PSObject.Properties.Name -contains "MonitorDeviceName") {
+            $screen = @($DisplayState.Screens | Where-Object { $_.DeviceName -eq $entry.MonitorDeviceName } | Select-Object -First 1)[0]
         }
 
         if (-not $screen) {
