@@ -4,11 +4,10 @@ param(
     [int]$WaitForExistingWindowSeconds = 120,
     [int]$PollIntervalSeconds = 2,
     [int]$PostLaunchWindowWaitSeconds = 20,
-    [string]$ZenLauncherPath = "C:\Program Files\Zen Browser\desktop-launcher\desktop-launcher.exe",
-    [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
+    [string]$BrowserPath = "",
     [string]$DiscordPath = "",
     [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe"),
-    [string[]]$MaximizeProcessNames = @("zen"),
+    [string[]]$MaximizeProcessNames = @(),
     [switch]$LaunchMissingApps
 )
 
@@ -59,6 +58,7 @@ Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "BrowserSupport.ps1")
 . (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
 
 $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot -Parameters @{
@@ -67,8 +67,7 @@ $logger = New-RunLogger -ScriptName "Apply-WindowLayout" -ScriptRoot $scriptRoot
     WaitForExistingWindowSeconds = $WaitForExistingWindowSeconds
     PollIntervalSeconds = $PollIntervalSeconds
     PostLaunchWindowWaitSeconds = $PostLaunchWindowWaitSeconds
-    ZenLauncherPath = $ZenLauncherPath
-    ZenPath = $ZenPath
+    BrowserPath = $BrowserPath
     DiscordPath = $DiscordPath
     SpotifyPath = $SpotifyPath
     MaximizeProcessNames = $MaximizeProcessNames
@@ -129,31 +128,6 @@ function Get-TopLevelWindows {
     return $windows
 }
 
-function Get-BestWindowMatch {
-    param(
-        [string]$ProcessName,
-        [string]$Title
-    )
-
-    $windows = Get-TopLevelWindows |
-        Where-Object {
-            $_.ProcessName -ieq $ProcessName -and
-            $_.Visible -and
-            $_.Width -gt 200 -and
-            $_.Height -gt 150 -and
-            -not (Test-IgnoredWindow -ProcessName $_.ProcessName -Title $_.Title)
-        }
-
-    if ($Title) {
-        $titleMatch = $windows | Where-Object { $_.Title -eq $Title } | Sort-Object Area -Descending | Select-Object -First 1
-        if ($titleMatch) {
-            return $titleMatch
-        }
-    }
-
-    return $windows | Sort-Object Area -Descending | Select-Object -First 1
-}
-
 function Test-IgnoredWindow {
     param(
         [string]$ProcessName,
@@ -170,46 +144,34 @@ function Test-IgnoredWindow {
     }
 }
 
-function Wait-ForWindow {
+function Get-BestWindowMatch {
     param(
-        [hashtable]$Logger,
         [string]$ProcessName,
         [string]$Title,
-        [int]$TimeoutSeconds,
-        [int]$PollSeconds,
-        [int]$ProgressEveryPolls = 5
+        [object[]]$Windows
     )
 
-    $startedWaitingAt = Get-Date
-    $pollCount = 0
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    do {
-        $match = Get-BestWindowMatch -ProcessName $ProcessName -Title $Title
-        if ($match) {
-            return [pscustomobject]@{
-                Window = $match
-                WaitedSeconds = [math]::Round(((Get-Date) - $startedWaitingAt).TotalSeconds, 2)
-                PollCount = $pollCount
-            }
-        }
-
-        $pollCount++
-        if ($Logger -and $pollCount -gt 0 -and ($pollCount % $ProgressEveryPolls -eq 0)) {
-            Add-RunEvent -Logger $Logger -Message "Still waiting for app window." -Type "waiting" -Data @{
-                ProcessName = $ProcessName
-                Title = $Title
-                WaitedSeconds = [math]::Round(((Get-Date) - $startedWaitingAt).TotalSeconds, 2)
-                PollCount = $pollCount
-            }
-        }
-        Start-Sleep -Seconds $PollSeconds
-    } while ((Get-Date) -lt $deadline)
-
-    return [pscustomobject]@{
-        Window = $null
-        WaitedSeconds = [math]::Round(((Get-Date) - $startedWaitingAt).TotalSeconds, 2)
-        PollCount = $pollCount
+    if (-not $PSBoundParameters.ContainsKey("Windows") -or $null -eq $Windows) {
+        $Windows = Get-TopLevelWindows
     }
+
+    $matches = @($Windows) |
+        Where-Object {
+            $_.ProcessName -ieq $ProcessName -and
+            $_.Visible -and
+            $_.Width -gt 200 -and
+            $_.Height -gt 150 -and
+            -not (Test-IgnoredWindow -ProcessName $_.ProcessName -Title $_.Title)
+        }
+
+    if ($Title) {
+        $titleMatch = $matches | Where-Object { $_.Title -eq $Title } | Sort-Object Area -Descending | Select-Object -First 1
+        if ($titleMatch) {
+            return $titleMatch
+        }
+    }
+
+    return $matches | Sort-Object Area -Descending | Select-Object -First 1
 }
 
 function Resolve-DiscordLaunch {
@@ -244,30 +206,54 @@ function Resolve-DiscordLaunch {
     return $null
 }
 
+function Get-EntryAppKey {
+    param([object]$Entry)
+
+    if ($Entry.PSObject.Properties.Name -contains "AppKey" -and -not [string]::IsNullOrWhiteSpace($Entry.AppKey)) {
+        return [string]$Entry.AppKey
+    }
+
+    switch -Regex ([string]$Entry.ProcessName) {
+        '^zen$' { return "Browser" }
+        '^discord$' { return "Discord" }
+        '^spotify$' { return "Spotify" }
+        default { return [string]$Entry.ProcessName }
+    }
+}
+
+function Resolve-EntryProcessName {
+    param(
+        [object]$Entry,
+        [object]$BrowserInfo
+    )
+
+    $appKey = Get-EntryAppKey -Entry $Entry
+    if ($appKey -ieq "Browser" -and $BrowserInfo) {
+        return $BrowserInfo.ProcessName
+    }
+
+    return [string]$Entry.ProcessName
+}
+
 function Resolve-LaunchSpec {
-    param([string]$ProcessName)
+    param(
+        [object]$Entry,
+        [object]$BrowserInfo
+    )
 
-    switch -Regex ($ProcessName) {
-        '^zen$' {
-            if (Test-Path $ZenLauncherPath -ErrorAction SilentlyContinue) {
+    switch -Regex (Get-EntryAppKey -Entry $Entry) {
+        '^Browser$' {
+            if ($BrowserInfo -and (Test-Path $BrowserInfo.FilePath -ErrorAction SilentlyContinue)) {
                 return @{
-                    FilePath = $ZenLauncherPath
+                    FilePath = $BrowserInfo.FilePath
                     ArgumentList = @()
-                    WorkingDirectory = (Split-Path -Parent $ZenLauncherPath)
-                }
-            }
-
-            if (Test-Path $ZenPath -ErrorAction SilentlyContinue) {
-                return @{
-                    FilePath = $ZenPath
-                    ArgumentList = @("-new-window")
-                    WorkingDirectory = (Split-Path -Parent $ZenPath)
+                    WorkingDirectory = $BrowserInfo.WorkingDirectory
                 }
             }
 
             return $null
         }
-        '^discord$' {
+        '^Discord$' {
             $discordLaunch = Resolve-DiscordLaunch -PreferredPath $DiscordPath
             if ($discordLaunch) {
                 $discordLaunch.WorkingDirectory = Split-Path -Parent $discordLaunch.FilePath
@@ -275,7 +261,7 @@ function Resolve-LaunchSpec {
 
             return $discordLaunch
         }
-        '^spotify$' {
+        '^Spotify$' {
             if (Test-Path $SpotifyPath -ErrorAction SilentlyContinue) {
                 return @{
                     FilePath = $SpotifyPath
@@ -293,9 +279,12 @@ function Resolve-LaunchSpec {
 }
 
 function Start-TrackedApp {
-    param([string]$ProcessName)
+    param(
+        [object]$Entry,
+        [object]$BrowserInfo
+    )
 
-    $launchSpec = Resolve-LaunchSpec -ProcessName $ProcessName
+    $launchSpec = Resolve-LaunchSpec -Entry $Entry -BrowserInfo $BrowserInfo
     if (-not $launchSpec) {
         return [pscustomobject]@{
             Started = $false
@@ -349,6 +338,17 @@ try {
     $displayState = Get-DisplayLayoutState
     $config = Read-WindowLayoutConfig -Path $ConfigPath
     $layoutPlan = Resolve-WindowLayoutPlan -Config $config -DisplayState $displayState
+    $browserInfo = Get-DefaultBrowserInfo -PreferredPath $BrowserPath
+    $effectiveMaximizeProcessNames = if (@($MaximizeProcessNames).Count -gt 0) {
+        @($MaximizeProcessNames)
+    }
+    elseif ($browserInfo) {
+        @($browserInfo.ProcessName)
+    }
+    else {
+        @()
+    }
+
     if (-not $layoutPlan) {
         Add-RunEvent -Logger $logger -Message "No saved layout plan was available." -Type "skipped" -Data @{
             ConfigPath = $ConfigPath
@@ -367,6 +367,13 @@ try {
         MatchType = $layoutPlan.MatchType
         WindowCount = $layout.Count
     }
+    if ($browserInfo) {
+        Add-RunEvent -Logger $logger -Message "Resolved default browser." -Type "browser_resolved" -Data @{
+            ProcessName = $browserInfo.ProcessName
+            FilePath = $browserInfo.FilePath
+            ProgId = $browserInfo.ProgId
+        }
+    }
 
     if ($StartupDelaySeconds -gt 0) {
         Add-RunEvent -Logger $logger -Message "Waiting before window handling." -Type "delay" -Data @{
@@ -375,11 +382,18 @@ try {
         Start-Sleep -Seconds $StartupDelaySeconds
     }
 
-    $results = @()
+    $results = New-Object System.Collections.Generic.List[object]
+    $windowsByIndex = @{}
+    $pendingLookups = New-Object System.Collections.Generic.List[object]
+    $windowSnapshot = Get-TopLevelWindows
 
-    foreach ($entry in $layout) {
-        $result = [ordered]@{
-            ProcessName = $entry.ProcessName
+    for ($i = 0; $i -lt $layout.Count; $i++) {
+        $entry = $layout[$i]
+        $resolvedProcessName = Resolve-EntryProcessName -Entry $entry -BrowserInfo $browserInfo
+        $result = [pscustomobject]@{
+            AppKey = Get-EntryAppKey -Entry $entry
+            ProcessName = $resolvedProcessName
+            SavedProcessName = $entry.ProcessName
             Title = $entry.Title
             WaitedForExistingWindowSeconds = $null
             ExistingWindowPolls = $null
@@ -396,26 +410,23 @@ try {
             TargetWidth = [int]$entry.Width
             TargetHeight = [int]$entry.Height
         }
+        $results.Add($result) | Out-Null
 
-        $windowLookup = Wait-ForWindow `
-            -Logger $logger `
-            -ProcessName $entry.ProcessName `
-            -Title $entry.Title `
-            -TimeoutSeconds $WaitForExistingWindowSeconds `
-            -PollSeconds $PollIntervalSeconds
+        $window = Get-BestWindowMatch -Windows $windowSnapshot -ProcessName $resolvedProcessName -Title $entry.Title
+        if ($window) {
+            $result.WaitedForExistingWindowSeconds = 0
+            $result.ExistingWindowPolls = 0
+            $windowsByIndex[$i] = $window
+            continue
+        }
 
-        $result.WaitedForExistingWindowSeconds = $windowLookup.WaitedSeconds
-        $result.ExistingWindowPolls = $windowLookup.PollCount
-        $window = $windowLookup.Window
-
-        if (-not $window -and $LaunchMissingApps) {
-            Add-RunEvent -Logger $logger -Message "No existing window found. Launching app." -Type "launch_attempt" -Data @{
-                ProcessName = $entry.ProcessName
-                WaitedSeconds = $windowLookup.WaitedSeconds
-                PollCount = $windowLookup.PollCount
+        if ($LaunchMissingApps) {
+            Add-RunEvent -Logger $logger -Message "No existing window found in startup snapshot. Launching app." -Type "launch_attempt" -Data @{
+                ProcessName = $resolvedProcessName
+                AppKey = $result.AppKey
             }
 
-            $launchResult = Start-TrackedApp -ProcessName $entry.ProcessName
+            $launchResult = Start-TrackedApp -Entry $entry -BrowserInfo $browserInfo
             $result.LaunchedByScript = $true
             $result.LaunchSucceeded = $launchResult.Started
             $result.LaunchPath = $launchResult.FilePath
@@ -423,39 +434,114 @@ try {
 
             if ($launchResult.Started) {
                 Add-RunEvent -Logger $logger -Message "Started app." -Type "launched" -Data @{
-                    ProcessName = $entry.ProcessName
+                    ProcessName = $resolvedProcessName
                     FilePath = $launchResult.FilePath
                     WorkingDirectory = $launchResult.WorkingDirectory
                     Arguments = @($launchResult.ArgumentList)
                 }
 
-                $postLaunchLookup = Wait-ForWindow `
-                    -Logger $logger `
-                    -ProcessName $entry.ProcessName `
-                    -Title $entry.Title `
-                    -TimeoutSeconds $PostLaunchWindowWaitSeconds `
-                    -PollSeconds $PollIntervalSeconds
-
-                $result.WaitedAfterLaunchSeconds = $postLaunchLookup.WaitedSeconds
-                $result.PostLaunchPolls = $postLaunchLookup.PollCount
-                $window = $postLaunchLookup.Window
+                $pendingLookups.Add([pscustomobject]@{
+                    Index = $i
+                    ProcessName = $resolvedProcessName
+                    Title = $entry.Title
+                    StartedAt = Get-Date
+                    Deadline = (Get-Date).AddSeconds($PostLaunchWindowWaitSeconds)
+                    PollCount = 0
+                    WaitingPhase = "post_launch"
+                }) | Out-Null
             }
             else {
                 Add-RunEvent -Logger $logger -Message "Failed to start app." -Type "launch_failed" -Data @{
-                    ProcessName = $entry.ProcessName
+                    ProcessName = $resolvedProcessName
                     Error = $launchResult.Error
                     FilePath = $launchResult.FilePath
                     WorkingDirectory = $launchResult.WorkingDirectory
                 }
             }
+
+            continue
         }
+
+        $pendingLookups.Add([pscustomobject]@{
+            Index = $i
+            ProcessName = $resolvedProcessName
+            Title = $entry.Title
+            StartedAt = Get-Date
+            Deadline = (Get-Date).AddSeconds($WaitForExistingWindowSeconds)
+            PollCount = 0
+            WaitingPhase = "existing"
+        }) | Out-Null
+    }
+
+    while ($pendingLookups.Count -gt 0) {
+        $windowSnapshot = Get-TopLevelWindows
+        $now = Get-Date
+        $nextPendingLookups = New-Object System.Collections.Generic.List[object]
+
+        foreach ($lookup in $pendingLookups) {
+            $window = Get-BestWindowMatch -Windows $windowSnapshot -ProcessName $lookup.ProcessName -Title $lookup.Title
+            if ($window) {
+                $windowsByIndex[$lookup.Index] = $window
+                $waitedSeconds = [math]::Round(($now - $lookup.StartedAt).TotalSeconds, 2)
+                if ($lookup.WaitingPhase -eq "post_launch") {
+                    $results[$lookup.Index].WaitedAfterLaunchSeconds = $waitedSeconds
+                    $results[$lookup.Index].PostLaunchPolls = $lookup.PollCount
+                }
+                else {
+                    $results[$lookup.Index].WaitedForExistingWindowSeconds = $waitedSeconds
+                    $results[$lookup.Index].ExistingWindowPolls = $lookup.PollCount
+                }
+
+                continue
+            }
+
+            if ($now -ge $lookup.Deadline) {
+                $waitedSeconds = [math]::Round(($now - $lookup.StartedAt).TotalSeconds, 2)
+                if ($lookup.WaitingPhase -eq "post_launch") {
+                    $results[$lookup.Index].WaitedAfterLaunchSeconds = $waitedSeconds
+                    $results[$lookup.Index].PostLaunchPolls = $lookup.PollCount
+                }
+                else {
+                    $results[$lookup.Index].WaitedForExistingWindowSeconds = $waitedSeconds
+                    $results[$lookup.Index].ExistingWindowPolls = $lookup.PollCount
+                }
+
+                continue
+            }
+
+            $lookup.PollCount++
+            if ($lookup.PollCount % 5 -eq 0) {
+                Add-RunEvent -Logger $logger -Message "Still waiting for app window." -Type "waiting" -Data @{
+                    ProcessName = $lookup.ProcessName
+                    Title = $lookup.Title
+                    WaitedSeconds = [math]::Round(($now - $lookup.StartedAt).TotalSeconds, 2)
+                    PollCount = $lookup.PollCount
+                    WaitingPhase = $lookup.WaitingPhase
+                }
+            }
+
+            $nextPendingLookups.Add($lookup) | Out-Null
+        }
+
+        if ($nextPendingLookups.Count -eq 0) {
+            break
+        }
+
+        Start-Sleep -Seconds $PollIntervalSeconds
+        $pendingLookups = $nextPendingLookups
+    }
+
+    for ($i = 0; $i -lt $results.Count; $i++) {
+        $entry = $layout[$i]
+        $result = $results[$i]
+        $window = $windowsByIndex[$i]
 
         if (-not $window) {
             Add-RunEvent -Logger $logger -Message "No window found for app." -Type "window_missing" -Data @{
-                ProcessName = $entry.ProcessName
+                ProcessName = $result.ProcessName
+                AppKey = $result.AppKey
                 LaunchMissingApps = [bool]$LaunchMissingApps
             }
-            $results += [pscustomobject]$result
             continue
         }
 
@@ -480,7 +566,7 @@ try {
 
         if ($moved) {
             Add-RunEvent -Logger $logger -Message "Positioned app window." -Type "positioned" -Data @{
-                ProcessName = $entry.ProcessName
+                ProcessName = $result.ProcessName
                 Left = [int]$entry.Left
                 Top = [int]$entry.Top
                 Width = [int]$entry.Width
@@ -489,26 +575,24 @@ try {
         }
         else {
             Add-RunEvent -Logger $logger -Message "Failed to position app window." -Type "position_failed" -Data @{
-                ProcessName = $entry.ProcessName
+                ProcessName = $result.ProcessName
             }
         }
 
-        if ($moved -and ($MaximizeProcessNames -icontains $entry.ProcessName)) {
+        if ($moved -and ($effectiveMaximizeProcessNames -icontains $result.ProcessName)) {
             Start-Sleep -Milliseconds 150
             $maximized = [WindowLayoutApplyNative]::ShowWindowAsync($hWnd, $swMaximize)
             $result.Maximized = [bool]$maximized
             Add-RunEvent -Logger $logger -Message "Maximized app window." -Type "maximized" -Data @{
-                ProcessName = $entry.ProcessName
+                ProcessName = $result.ProcessName
                 Maximized = [bool]$maximized
             }
         }
-
-        $results += [pscustomobject]$result
     }
 
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         MatchType = $layoutPlan.MatchType
-        Apps = $results
+        Apps = @($results)
     }
 }
 catch {

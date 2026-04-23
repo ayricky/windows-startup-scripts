@@ -24,5 +24,5 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Waits for Discord and Zen startup windows and reapplies the saved window layout." `
+    -Description "Waits for Discord, your default browser, and Spotify startup windows and reapplies the saved window layout." `
     -Force

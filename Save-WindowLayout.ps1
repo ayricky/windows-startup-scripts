@@ -1,6 +1,7 @@
 param(
     [string]$ConfigPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "window-layout.json"),
-    [string[]]$ProcessNames = @("Discord", "zen", "Spotify")
+    [string[]]$ProcessNames = @(),
+    [string]$BrowserPath = ""
 )
 
 $signature = @'
@@ -44,11 +45,67 @@ Add-Type -TypeDefinition $signature -ErrorAction SilentlyContinue
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "BrowserSupport.ps1")
 . (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
+
+function Resolve-TrackedProcesses {
+    param(
+        [string[]]$RequestedProcessNames,
+        [object]$BrowserInfo
+    )
+
+    if (@($RequestedProcessNames).Count -eq 0) {
+        if (-not $BrowserInfo) {
+            throw "Default browser could not be resolved."
+        }
+
+        return @(
+            [pscustomobject]@{ AppKey = "Discord"; ProcessName = "Discord" },
+            [pscustomobject]@{ AppKey = "Browser"; ProcessName = $BrowserInfo.ProcessName },
+            [pscustomobject]@{ AppKey = "Spotify"; ProcessName = "Spotify" }
+        )
+    }
+
+    $tracked = foreach ($requestedName in @($RequestedProcessNames)) {
+        switch -Regex ($requestedName) {
+            '^(browser|zen)$' {
+                if (-not $BrowserInfo) {
+                    throw "Default browser could not be resolved."
+                }
+
+                [pscustomobject]@{
+                    AppKey = "Browser"
+                    ProcessName = $BrowserInfo.ProcessName
+                }
+            }
+            '^discord$' {
+                [pscustomobject]@{
+                    AppKey = "Discord"
+                    ProcessName = "Discord"
+                }
+            }
+            '^spotify$' {
+                [pscustomobject]@{
+                    AppKey = "Spotify"
+                    ProcessName = "Spotify"
+                }
+            }
+            default {
+                [pscustomobject]@{
+                    AppKey = $null
+                    ProcessName = $requestedName
+                }
+            }
+        }
+    }
+
+    return @($tracked)
+}
 
 $logger = New-RunLogger -ScriptName "Save-WindowLayout" -ScriptRoot $scriptRoot -Parameters @{
     ConfigPath = $ConfigPath
     ProcessNames = $ProcessNames
+    BrowserPath = $BrowserPath
 }
 
 function Get-TopLevelWindows {
@@ -120,6 +177,12 @@ function Test-IgnoredWindow {
 try {
     Add-RunEvent -Logger $logger -Message "Run started." -Type "start"
 
+    $browserInfo = Get-DefaultBrowserInfo -PreferredPath $BrowserPath
+    $trackedProcesses = Resolve-TrackedProcesses -RequestedProcessNames $ProcessNames -BrowserInfo $browserInfo
+    Add-RunEvent -Logger $logger -Message "Resolved tracked apps." -Type "tracked_apps" -Data @{
+        Apps = $trackedProcesses
+    }
+
     $displayState = Get-DisplayLayoutState
     Add-RunEvent -Logger $logger -Message "Detected current display layout." -Type "display_detected" -Data @{
         MonitorCount = $displayState.MonitorCount
@@ -127,10 +190,10 @@ try {
     }
 
     $windows = Get-TopLevelWindows
-    $layout = foreach ($processName in $ProcessNames) {
+    $layout = foreach ($trackedProcess in $trackedProcesses) {
         $match = $windows |
             Where-Object {
-                $_.ProcessName -ieq $processName -and
+                $_.ProcessName -ieq $trackedProcess.ProcessName -and
                 $_.Visible -and
                 $_.Width -gt 200 -and
                 $_.Height -gt 150 -and
@@ -141,9 +204,10 @@ try {
 
         if (-not $match) {
             Add-RunEvent -Logger $logger -Message "No matching visible window found." -Type "window_missing" -Data @{
-                ProcessName = $processName
+                ProcessName = $trackedProcess.ProcessName
+                AppKey = $trackedProcess.AppKey
             }
-            Write-Warning "No matching visible window found for $processName."
+            Write-Warning "No matching visible window found for $($trackedProcess.ProcessName)."
             continue
         }
 
@@ -154,10 +218,12 @@ try {
             Top = $match.Top
             Width = $match.Width
             Height = $match.Height
+            AppKey = $trackedProcess.AppKey
         }
 
         [pscustomobject]@{
             ProcessName = $match.ProcessName
+            AppKey = $trackedProcess.AppKey
             Title = ""
             Left = $match.Left
             Top = $match.Top
@@ -170,13 +236,13 @@ try {
         Complete-RunLogger -Logger $logger -Status "failed" -Summary @{
             Error = "No matching windows were captured."
         }
-        throw "No matching windows were captured. Arrange Discord, Zen, and Spotify, then run this script from your desktop session."
+        throw "No matching windows were captured. Arrange Discord, your default browser, and Spotify, then run this script from your desktop session."
     }
 
     $dynamicLayout = ConvertTo-DynamicWindowLayoutEntries -Windows $layout -DisplayState $displayState
 
     $configToSave = [pscustomobject]@{
-        Version = 3
+        Version = 4
         DynamicWindows = @($dynamicLayout)
     }
 

@@ -1,4 +1,47 @@
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+$displayLayoutScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $displayLayoutScriptRoot "BrowserSupport.ps1")
+
+$script:CachedDefaultBrowserInfo = $null
+$script:DefaultBrowserInfoLoaded = $false
+
+function Get-CachedDefaultBrowserInfo {
+    if (-not $script:DefaultBrowserInfoLoaded) {
+        $script:CachedDefaultBrowserInfo = Get-DefaultBrowserInfo
+        $script:DefaultBrowserInfoLoaded = $true
+    }
+
+    return $script:CachedDefaultBrowserInfo
+}
+
+function Get-TrackedAppKey {
+    param([object]$Entry)
+
+    if ($Entry -and $Entry.PSObject.Properties.Name -contains "AppKey" -and -not [string]::IsNullOrWhiteSpace($Entry.AppKey)) {
+        return [string]$Entry.AppKey
+    }
+
+    switch -Regex ([string]$Entry.ProcessName) {
+        '^zen$' { return "Browser" }
+        '^discord$' { return "Discord" }
+        '^spotify$' { return "Spotify" }
+        default { return $null }
+    }
+}
+
+function Resolve-TrackedProcessName {
+    param([object]$Entry)
+
+    $appKey = Get-TrackedAppKey -Entry $Entry
+    if ($appKey -ieq "Browser") {
+        $browserInfo = Get-CachedDefaultBrowserInfo
+        if ($browserInfo) {
+            return $browserInfo.ProcessName
+        }
+    }
+
+    return [string]$Entry.ProcessName
+}
 
 function Get-DisplayLayoutState {
     $rawScreens = [System.Windows.Forms.Screen]::AllScreens |
@@ -39,7 +82,7 @@ function Read-WindowLayoutConfig {
 
     if (-not (Test-Path $Path)) {
         return [pscustomobject]@{
-            Version = 3
+            Version = 4
             DynamicWindows = @()
         }
     }
@@ -47,13 +90,13 @@ function Read-WindowLayoutConfig {
     $raw = Get-Content $Path -Raw | ConvertFrom-Json
     if ($raw.PSObject.Properties.Name -contains "DynamicWindows") {
         return [pscustomobject]@{
-            Version = if ($raw.PSObject.Properties.Name -contains "Version") { [int]$raw.Version } else { 3 }
+            Version = if ($raw.PSObject.Properties.Name -contains "Version") { [int]$raw.Version } else { 4 }
             DynamicWindows = @($raw.DynamicWindows)
         }
     }
 
     return [pscustomobject]@{
-        Version = 3
+        Version = 4
         DynamicWindows = @()
     }
 }
@@ -127,6 +170,7 @@ function ConvertTo-DynamicWindowLayoutEntries {
 
         [pscustomobject]@{
             ProcessName = $window.ProcessName
+            AppKey = Get-TrackedAppKey -Entry $window
             Title = if ($window.PSObject.Properties.Name -contains "Title") { $window.Title } else { "" }
             MonitorDeviceName = $screen.DeviceName
             MonitorRole = $screen.Role
@@ -162,7 +206,8 @@ function Resolve-DynamicWindowLayoutEntries {
         }
 
         [pscustomobject]@{
-            ProcessName = $entry.ProcessName
+            ProcessName = Resolve-TrackedProcessName -Entry $entry
+            AppKey = Get-TrackedAppKey -Entry $entry
             Title = if ($entry.PSObject.Properties.Name -contains "Title") { $entry.Title } else { "" }
             Left = [int][Math]::Round([double]$screen.X + ([double]$entry.RelativeLeft * [double]$screen.Width))
             Top = [int][Math]::Round([double]$screen.Y + ([double]$entry.RelativeTop * [double]$screen.Height))

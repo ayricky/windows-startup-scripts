@@ -1,6 +1,6 @@
 param(
     [string]$StartupFolder = (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"),
-    [string]$ZenPath = "C:\Program Files\Zen Browser\zen.exe",
+    [string]$BrowserStarterScriptPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Start-DefaultBrowser.ps1"),
     [string]$DiscordUpdatePath = (Join-Path $env:LOCALAPPDATA "Discord\Update.exe"),
     [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe")
 )
@@ -10,7 +10,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $logger = New-RunLogger -ScriptName "Install-AppStartupShortcuts" -ScriptRoot $scriptRoot -Parameters @{
     StartupFolder = $StartupFolder
-    ZenPath = $ZenPath
+    BrowserStarterScriptPath = $BrowserStarterScriptPath
     DiscordUpdatePath = $DiscordUpdatePath
     SpotifyPath = $SpotifyPath
 }
@@ -40,25 +40,26 @@ try {
         New-Item -ItemType Directory -Path $StartupFolder -Force | Out-Null
     }
 
-    if (-not (Test-Path $ZenPath)) {
-        throw "Zen executable not found at $ZenPath"
+    if (-not (Test-Path $BrowserStarterScriptPath)) {
+        throw "Default browser starter script not found at $BrowserStarterScriptPath"
     }
 
     if (-not (Test-Path $DiscordUpdatePath)) {
         throw "Discord launcher not found at $DiscordUpdatePath"
     }
 
-    $zenShortcutPath = Join-Path $StartupFolder "Zen Browser.lnk"
+    $browserShortcutPath = Join-Path $StartupFolder "Default Browser.lnk"
     New-StartupShortcut `
-        -ShortcutPath $zenShortcutPath `
-        -TargetPath $ZenPath `
-        -Arguments @() `
-        -WorkingDirectory (Split-Path -Parent $ZenPath) `
-        -Description "Start Zen Browser at logon"
+        -ShortcutPath $browserShortcutPath `
+        -TargetPath "powershell.exe" `
+        -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "`"$BrowserStarterScriptPath`"") `
+        -WorkingDirectory $scriptRoot `
+        -Description "Start the current default browser at logon"
 
-    Add-RunEvent -Logger $logger -Message "Created Zen startup shortcut." -Type "shortcut_created" -Data @{
-        ShortcutPath = $zenShortcutPath
-        TargetPath = $ZenPath
+    Add-RunEvent -Logger $logger -Message "Created default browser startup shortcut." -Type "shortcut_created" -Data @{
+        ShortcutPath = $browserShortcutPath
+        TargetPath = "powershell.exe"
+        Arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $BrowserStarterScriptPath)
     }
 
     $discordShortcutPath = Join-Path $StartupFolder "Discord.lnk"
@@ -99,9 +100,10 @@ try {
         StartupFolder = $StartupFolder
         Shortcuts = @(
             [pscustomobject]@{
-                Name = "Zen Browser"
-                ShortcutPath = $zenShortcutPath
-                TargetPath = $ZenPath
+                Name = "Default Browser"
+                ShortcutPath = $browserShortcutPath
+                TargetPath = "powershell.exe"
+                Arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", $BrowserStarterScriptPath)
             },
             [pscustomobject]@{
                 Name = "Discord"
