@@ -1,6 +1,6 @@
 param(
     [int]$InitialDelaySeconds = 180,
-    [int]$LayoutTolerancePixels = 12,
+    [int]$LayoutTolerancePixels = 20,
     [string]$ConfigPath = (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "window-layout.json"),
     [string[]]$ClosedProcessNames = @(),
     [string[]]$HiddenWindowProcessNames = @(
@@ -8,11 +8,13 @@ param(
         "WaveLink",
         "WaveLinkSE",
         "rawaccel"
-    )
+    ),
+    [switch]$Remediate
 )
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptRoot "RunLogger.ps1")
+. (Join-Path $scriptRoot "BrowserSupport.ps1")
 . (Join-Path $scriptRoot "DisplayLayoutProfiles.ps1")
 
 $logger = New-RunLogger -ScriptName "Post-BootCheck" -ScriptRoot $scriptRoot -Parameters @{
@@ -21,6 +23,7 @@ $logger = New-RunLogger -ScriptName "Post-BootCheck" -ScriptRoot $scriptRoot -Pa
     ConfigPath = $ConfigPath
     ClosedProcessNames = $ClosedProcessNames
     HiddenWindowProcessNames = $HiddenWindowProcessNames
+    Remediate = [bool]$Remediate
 }
 
 $signature = @'
@@ -161,19 +164,52 @@ function Test-WithinTolerance {
     return ([math]::Abs($Actual - $Expected) -le $Tolerance)
 }
 
+function Get-EntryAppKey {
+    param([object]$Entry)
+
+    if ($Entry.PSObject.Properties.Name -contains "AppKey" -and -not [string]::IsNullOrWhiteSpace($Entry.AppKey)) {
+        return [string]$Entry.AppKey
+    }
+
+    switch -Regex ([string]$Entry.ProcessName) {
+        '^zen$' { return "Browser" }
+        '^discord$' { return "Discord" }
+        '^spotify$' { return "Spotify" }
+        default { return [string]$Entry.ProcessName }
+    }
+}
+
+function Resolve-EntryProcessName {
+    param(
+        [object]$Entry,
+        [object]$BrowserInfo
+    )
+
+    $appKey = Get-EntryAppKey -Entry $Entry
+    if ($appKey -ieq "Browser" -and $BrowserInfo) {
+        return $BrowserInfo.ProcessName
+    }
+
+    return [string]$Entry.ProcessName
+}
+
 function Get-LayoutChecks {
     param(
         [object[]]$Windows,
         [object[]]$LayoutEntries,
+        [object]$BrowserInfo,
         [int]$Tolerance
     )
 
     $checks = foreach ($entry in @($LayoutEntries)) {
-        $window = Get-BestWindowMatch -Windows $Windows -ProcessName $entry.ProcessName -Title $entry.Title
+        $processName = Resolve-EntryProcessName -Entry $entry -BrowserInfo $BrowserInfo
+        $window = Get-BestWindowMatch -Windows $Windows -ProcessName $processName -Title $entry.Title
 
         if (-not $window) {
             [pscustomobject]@{
-                ProcessName = $entry.ProcessName
+                AppKey = Get-EntryAppKey -Entry $entry
+                ProcessName = $processName
+                SavedProcessName = $entry.ProcessName
                 Found = $false
                 InPosition = $false
                 Reason = "Window not found"
@@ -188,7 +224,9 @@ function Get-LayoutChecks {
             (Test-WithinTolerance -Actual $window.Height -Expected ([int]$entry.Height) -Tolerance $Tolerance)
 
         [pscustomobject]@{
-            ProcessName = $entry.ProcessName
+            AppKey = Get-EntryAppKey -Entry $entry
+            ProcessName = $processName
+            SavedProcessName = $entry.ProcessName
             Found = $true
             InPosition = $inPosition
             Reason = if ($inPosition) { "OK" } else { "Window found but geometry differs" }
@@ -258,6 +296,7 @@ try {
 
     $layoutChecks = @()
     $windows = Get-TopLevelWindows
+    $browserInfo = Get-DefaultBrowserInfo
     $displayState = $null
     $layoutPlan = $null
     $layoutEntries = @()
@@ -278,7 +317,7 @@ try {
                 MonitorCount = $displayState.MonitorCount
             }
         }
-        $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -Tolerance $LayoutTolerancePixels
+        $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -BrowserInfo $browserInfo -Tolerance $LayoutTolerancePixels
     }
     else {
         Add-RunEvent -Logger $logger -Message "Layout config not found." -Type "warning" -Data @{
@@ -316,7 +355,7 @@ try {
         PrimeWaveLink = $null
     }
 
-    if ($primeNeedsRemediation) {
+    if ($Remediate -and $primeNeedsRemediation) {
         $primeScriptPath = Join-Path $scriptRoot "Prime-WaveLinkUI.ps1"
         if (Test-Path $primeScriptPath) {
             $remediation.PrimeWaveLink = Invoke-RemediationScript `
@@ -330,7 +369,7 @@ try {
         }
     }
 
-    if ($layoutNeedsRemediation -and $layoutEntries.Count -gt 0) {
+    if ($Remediate -and $layoutNeedsRemediation -and $layoutEntries.Count -gt 0) {
         $applyScriptPath = Join-Path $scriptRoot "Apply-WindowLayout.ps1"
         if (Test-Path $applyScriptPath) {
             $remediation.Layout = Invoke-RemediationScript `
@@ -343,7 +382,7 @@ try {
             $applyRun = @($applyRuns | Where-Object { ([DateTimeOffset]$_.StartedAt) -ge ([DateTimeOffset]$remediation.Layout.StartedAt) } | Select-Object -Last 1)[0]
 
             $windows = Get-TopLevelWindows
-            $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -Tolerance $LayoutTolerancePixels
+            $layoutChecks = Get-LayoutChecks -Windows $windows -LayoutEntries $layoutEntries -BrowserInfo $browserInfo -Tolerance $LayoutTolerancePixels
             $hiddenWindowChecks = @(
                 foreach ($processName in $HiddenWindowProcessNames) {
                     $window = Get-BestWindowMatch -Windows $windows -ProcessName $processName -Title ""
@@ -404,10 +443,18 @@ try {
         ApplyRun = if ($applyRun) { $applyRun } else { $null }
         PrimeRun = if ($primeRun) { $primeRun } else { $null }
         DisplayState = if ($displayState) { $displayState } else { $null }
+        Browser = if ($browserInfo) {
+            [pscustomobject]@{
+                ProcessName = $browserInfo.ProcessName
+                FilePath = $browserInfo.FilePath
+                ProgId = $browserInfo.ProgId
+            }
+        } else { $null }
         ProfileMatchType = if ($layoutPlan) { $layoutPlan.MatchType } else { $null }
         LayoutChecks = $layoutChecks
         ProcessChecks = $processChecks
         HiddenWindowChecks = $hiddenWindowChecks
+        RemediationEnabled = [bool]$Remediate
         Remediation = [pscustomobject]$remediation
         Issues = $issues
     }

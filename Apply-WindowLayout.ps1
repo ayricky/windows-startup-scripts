@@ -404,7 +404,10 @@ try {
             WaitedAfterLaunchSeconds = $null
             PostLaunchPolls = $null
             WindowFound = $false
+            FoundWindowTitle = $null
+            FoundWindowHandle = $null
             Positioned = $false
+            Maximized = $false
             TargetLeft = [int]$entry.Left
             TargetTop = [int]$entry.Top
             TargetWidth = [int]$entry.Width
@@ -590,9 +593,36 @@ try {
         }
     }
 
+    $summaryApps = for ($resultIndex = 0; $resultIndex -lt $results.Count; $resultIndex++) {
+        $appResult = $results[$resultIndex]
+        [pscustomobject]@{
+            AppKey = $appResult.AppKey
+            ProcessName = $appResult.ProcessName
+            SavedProcessName = $appResult.SavedProcessName
+            Title = $appResult.Title
+            WaitedForExistingWindowSeconds = $appResult.WaitedForExistingWindowSeconds
+            ExistingWindowPolls = $appResult.ExistingWindowPolls
+            LaunchedByScript = $appResult.LaunchedByScript
+            LaunchSucceeded = $appResult.LaunchSucceeded
+            LaunchPath = $appResult.LaunchPath
+            LaunchArguments = @($appResult.LaunchArguments)
+            WaitedAfterLaunchSeconds = $appResult.WaitedAfterLaunchSeconds
+            PostLaunchPolls = $appResult.PostLaunchPolls
+            WindowFound = $appResult.WindowFound
+            FoundWindowTitle = $appResult.FoundWindowTitle
+            FoundWindowHandle = $appResult.FoundWindowHandle
+            Positioned = $appResult.Positioned
+            Maximized = $appResult.Maximized
+            TargetLeft = $appResult.TargetLeft
+            TargetTop = $appResult.TargetTop
+            TargetWidth = $appResult.TargetWidth
+            TargetHeight = $appResult.TargetHeight
+        }
+    }
+
     Complete-RunLogger -Logger $logger -Status "success" -Summary @{
         MatchType = $layoutPlan.MatchType
-        Apps = @($results)
+        Apps = @($summaryApps)
     }
 }
 catch {

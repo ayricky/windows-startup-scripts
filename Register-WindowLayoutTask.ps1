@@ -1,3 +1,7 @@
+param(
+    [switch]$DoNotLaunchMissingApps
+)
+
 $taskName = "Apply Window Layout"
 $scriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "Apply-WindowLayout.ps1"
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -6,9 +10,29 @@ if (-not (Test-Path $scriptPath)) {
     throw "Window layout script not found at $scriptPath"
 }
 
+$layoutArguments = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-WindowStyle",
+    "Hidden",
+    "-File",
+    "`"$scriptPath`"",
+    "-StartupDelaySeconds",
+    "5",
+    "-WaitForExistingWindowSeconds",
+    "45",
+    "-PollIntervalSeconds",
+    "1"
+)
+
+if (-not $DoNotLaunchMissingApps) {
+    $layoutArguments += "-LaunchMissingApps"
+}
+
 $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    -Argument ($layoutArguments -join " ")
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $settings = New-ScheduledTaskSettingsSet `
@@ -24,5 +48,5 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Waits for Discord, your default browser, and Spotify startup windows and reapplies the saved window layout." `
+    -Description "Starts missing tracked apps if needed, then reapplies the saved Discord, default-browser, and Spotify window layout." `
     -Force
