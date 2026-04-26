@@ -2,11 +2,21 @@
 
 Windows logon automation for:
 
-- starting your default browser, `Discord`, and `Spotify`
+- starting your default browser, `Discord`, and `Spotify` from one scheduled task
 - restoring the saved default-browser, `Discord`, and `Spotify` layout
 - restoring windows relative to their saved monitor, even if that monitor changes resolution
 - briefly surfacing `Wave Link`, then closing only its window
 - applying `RawAccel` with `writer.exe settings.json`
+
+## Startup Model
+
+The clean default setup uses Task Scheduler as the single orchestrator for the tracked desktop apps:
+
+- `Apply Window Layout`: starts missing `Discord`, default browser, and `Spotify`, then applies the saved layout
+- `Prime Wave Link UI`: leaves Wave Link startup alone, then briefly surfaces/closes its UI after sign-in
+- RawAccel: configured through `HKCU\...\Run`
+
+Managed Startup-folder shortcuts for `Default Browser`, `Discord`, `Spotify`, and legacy `Zen Browser` are intentionally removed to avoid duplicate launches and timing races.
 
 ## Scripts
 
@@ -23,7 +33,7 @@ Windows logon automation for:
 - `Update-WindowLayout.ps1`: refreshes the saved layout
 - `Get-AutomationMetrics.ps1`: summarizes recent run history
 - `RunLogger.ps1`: shared bounded JSON logging
-- `Start-DefaultBrowser.ps1`: resolves and starts the current default browser at logon
+- `Start-DefaultBrowser.ps1`: fallback helper that resolves and starts the current default browser when explicit Startup-folder shortcuts are created
 
 ## Setup
 
