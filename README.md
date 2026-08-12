@@ -54,11 +54,13 @@ Sign out and back in, or reboot, to test.
 - `Apply-WindowLayout.ps1`
   - `StartupDelaySeconds`
   - `WaitForExistingWindowSeconds`
+  - `PostLaunchWindowWaitSeconds` (defaults to 60 seconds to accommodate Discord's slower UI startup)
   - `PollIntervalSeconds`
   - `BrowserPath`
   - `LaunchMissingApps`
 - `Register-WindowLayoutTask.ps1`
   - `DoNotLaunchMissingApps`
+  - `PostLaunchWindowWaitSeconds`
 - `Prime-WaveLinkUI.ps1`
   - `InitialDelaySeconds`
   - `WaitForWindowSeconds`

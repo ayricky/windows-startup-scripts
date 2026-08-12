@@ -3,7 +3,7 @@ param(
     [int]$StartupDelaySeconds = 10,
     [int]$WaitForExistingWindowSeconds = 120,
     [int]$PollIntervalSeconds = 2,
-    [int]$PostLaunchWindowWaitSeconds = 20,
+    [int]$PostLaunchWindowWaitSeconds = 60,
     [string]$BrowserPath = "",
     [string]$DiscordPath = "",
     [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe"),

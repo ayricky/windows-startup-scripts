@@ -1,5 +1,7 @@
 param(
-    [switch]$DoNotLaunchMissingApps
+    [switch]$DoNotLaunchMissingApps,
+    [ValidateRange(1, 600)]
+    [int]$PostLaunchWindowWaitSeconds = 60
 )
 
 $taskName = "Apply Window Layout"
@@ -22,6 +24,8 @@ $layoutArguments = @(
     "5",
     "-WaitForExistingWindowSeconds",
     "45",
+    "-PostLaunchWindowWaitSeconds",
+    $PostLaunchWindowWaitSeconds,
     "-PollIntervalSeconds",
     "1"
 )
