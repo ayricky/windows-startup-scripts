@@ -3,7 +3,7 @@ param(
     [int]$StartupDelaySeconds = 10,
     [int]$WaitForExistingWindowSeconds = 120,
     [int]$PollIntervalSeconds = 2,
-    [int]$PostLaunchWindowWaitSeconds = 20,
+    [int]$PostLaunchWindowWaitSeconds = 60,
     [string]$BrowserPath = "",
     [string]$DiscordPath = "",
     [string]$SpotifyPath = (Join-Path $env:APPDATA "Spotify\Spotify.exe"),
@@ -45,6 +45,12 @@ public static class WindowLayoutApplyNative {
 
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
@@ -172,6 +178,62 @@ function Get-BestWindowMatch {
     }
 
     return $matches | Sort-Object Area -Descending | Select-Object -First 1
+}
+
+function Get-VisibleFramePlacement {
+    param(
+        [IntPtr]$Handle,
+        [int]$Left,
+        [int]$Top,
+        [int]$Width,
+        [int]$Height
+    )
+
+    $placement = [ordered]@{
+        Left = $Left
+        Top = $Top
+        Width = $Width
+        Height = $Height
+        FrameInsetLeft = 0
+        FrameInsetTop = 0
+        FrameInsetRight = 0
+        FrameInsetBottom = 0
+    }
+
+    $outerRect = New-Object WindowLayoutApplyNative+RECT
+    $visibleRect = New-Object WindowLayoutApplyNative+RECT
+    if (-not [WindowLayoutApplyNative]::GetWindowRect($Handle, [ref]$outerRect)) {
+        return [pscustomobject]$placement
+    }
+
+    $dwmExtendedFrameBounds = 9
+    $dwmResult = [WindowLayoutApplyNative]::DwmGetWindowAttribute(
+        $Handle,
+        $dwmExtendedFrameBounds,
+        [ref]$visibleRect,
+        [Runtime.InteropServices.Marshal]::SizeOf($visibleRect)
+    )
+    if ($dwmResult -ne 0) {
+        return [pscustomobject]$placement
+    }
+
+    $dpi = [WindowLayoutApplyNative]::GetDpiForWindow($Handle)
+    $scale = if ($dpi -gt 0) { $dpi / 96.0 } else { 1.0 }
+    $visibleLeft = [int][math]::Round($visibleRect.Left / $scale)
+    $visibleTop = [int][math]::Round($visibleRect.Top / $scale)
+    $visibleRight = [int][math]::Round($visibleRect.Right / $scale)
+    $visibleBottom = [int][math]::Round($visibleRect.Bottom / $scale)
+
+    $placement.FrameInsetLeft = [math]::Max(0, $visibleLeft - $outerRect.Left)
+    $placement.FrameInsetTop = [math]::Max(0, $visibleTop - $outerRect.Top)
+    $placement.FrameInsetRight = [math]::Max(0, $outerRect.Right - $visibleRight)
+    $placement.FrameInsetBottom = [math]::Max(0, $outerRect.Bottom - $visibleBottom)
+    $placement.Left = $Left - $placement.FrameInsetLeft
+    $placement.Top = $Top - $placement.FrameInsetTop
+    $placement.Width = $Width + $placement.FrameInsetLeft + $placement.FrameInsetRight
+    $placement.Height = $Height + $placement.FrameInsetTop + $placement.FrameInsetBottom
+
+    return [pscustomobject]$placement
 }
 
 function Resolve-DiscordLaunch {
@@ -554,14 +616,21 @@ try {
 
         $hWnd = [IntPtr]::new([int64]$window.Handle)
         [void][WindowLayoutApplyNative]::ShowWindowAsync($hWnd, $swRestore)
+        Start-Sleep -Milliseconds 50
+        $placement = Get-VisibleFramePlacement `
+            -Handle $hWnd `
+            -Left ([int]$entry.Left) `
+            -Top ([int]$entry.Top) `
+            -Width ([int]$entry.Width) `
+            -Height ([int]$entry.Height)
 
         $moved = [WindowLayoutApplyNative]::SetWindowPos(
             $hWnd,
             [IntPtr]::Zero,
-            [int]$entry.Left,
-            [int]$entry.Top,
-            [int]$entry.Width,
-            [int]$entry.Height,
+            $placement.Left,
+            $placement.Top,
+            $placement.Width,
+            $placement.Height,
             ($swpNoZOrder -bor $swpNoActivate)
         )
 
@@ -574,6 +643,12 @@ try {
                 Top = [int]$entry.Top
                 Width = [int]$entry.Width
                 Height = [int]$entry.Height
+                FrameInsets = @{
+                    Left = $placement.FrameInsetLeft
+                    Top = $placement.FrameInsetTop
+                    Right = $placement.FrameInsetRight
+                    Bottom = $placement.FrameInsetBottom
+                }
             }
         }
         else {

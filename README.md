@@ -21,7 +21,7 @@ Managed Startup-folder shortcuts for `Default Browser`, `Discord`, `Spotify`, an
 ## Scripts
 
 - `Install-AppStartupShortcuts.ps1`: removes managed Startup-folder shortcuts by default so Task Scheduler is the single app-launch path; use `-CreateShortcuts` only for fallback/testing
-- `Apply-WindowLayout.ps1`: starts missing tracked apps when requested, waits for `Discord`, your default browser, and `Spotify`, restores the saved size and position, and maximizes the browser window
+- `Apply-WindowLayout.ps1`: starts missing tracked apps when requested, waits for `Discord`, your default browser, and `Spotify`, restores the saved visible-frame size and position without wallpaper gaps from invisible resize borders, and maximizes the browser window
 - `DisplayLayoutProfiles.ps1`: maps each saved window to its left/center/right monitor role first, then recalculates its position from that monitor's current bounds
 - `Prime-WaveLinkUI.ps1`: tries to surface the full `Wave Link` UI briefly after sign-in, then closes only the window; if Wave Link stays background-only, the run is logged as skipped instead of failed
 - `Post-BootCheck.ps1`: diagnostics for layout and Wave Link priming; add `-Remediate` only when you explicitly want it to retry work
@@ -54,11 +54,13 @@ Sign out and back in, or reboot, to test.
 - `Apply-WindowLayout.ps1`
   - `StartupDelaySeconds`
   - `WaitForExistingWindowSeconds`
+  - `PostLaunchWindowWaitSeconds` (defaults to 60 seconds to accommodate Discord's slower UI startup)
   - `PollIntervalSeconds`
   - `BrowserPath`
   - `LaunchMissingApps`
 - `Register-WindowLayoutTask.ps1`
   - `DoNotLaunchMissingApps`
+  - `PostLaunchWindowWaitSeconds`
 - `Prime-WaveLinkUI.ps1`
   - `InitialDelaySeconds`
   - `WaitForWindowSeconds`
